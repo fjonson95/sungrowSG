@@ -1,9 +1,18 @@
+<img src="custom_components/sungrow_sg/brand/icon@2x.png" alt="" width="96" height="96" align="right">
+
 # sungrowSG — Sungrow SG-serien som riktig Home Assistant-integration
 
 Egen Modbus-integration för Sungrow strängväxelriktare (SG-serien, i första hand
 SG12RT), byggd enligt den nya arkitekturen som beskrivs i Home Assistants
 utvecklarblogg ["Modernizing Modbus"](https://developers.home-assistant.io/blog/2026/07/05/modernizing-modbus/)
 (juli 2026).
+
+`custom_components/sungrow_sg/brand/` innehåller integrationens ikon
+(`icon.png`/`icon@2x.png`) — sedan HA 2026.3.0 kan anpassade integrationer
+skicka med sin egen ikon direkt i repot (ingen PR till
+`home-assistant/brands` behövs), se
+[Brands Proxy API-annonseringen](https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api).
+HA plockar upp den automatiskt, ingen extra konfiguration.
 
 Projektet är uppdelat i två delar, enligt mönstret `trovis-modbus` (bibliotek)
 + `trovis557x` (HA-integration):
