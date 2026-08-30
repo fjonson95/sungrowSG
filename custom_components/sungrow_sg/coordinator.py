@@ -16,6 +16,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from modbus_connection import ModbusError, ModbusTcpParams
 from modbus_connection.tmodbus import ModbusConnection
@@ -33,9 +34,17 @@ from .const import (
     get_toggle,
     restricted_field_names,
 )
-from .sungrow_modbus import SungrowSGInverter
+from .sungrow_modbus import SungrowSGControl, SungrowSGInverter
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _is_enabled(value: Any, *, on: int) -> bool | None:
+    """None before the first poll; otherwise whether the raw register
+    value equals its "on" enum code (e.g. 0xCF for start_stop, 0xAA for
+    the two enable/disable switches).
+    """
+    return None if value is None else int(value) == on
 
 
 class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -52,9 +61,13 @@ class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._connection = ModbusConnection(
             ModbusTcpParams(host=entry.data[CONF_HOST], port=entry.data[CONF_PORT])
         )
-        self._inverter = SungrowSGInverter(
-            self._connection.for_unit(entry.data[CONF_UNIT_ID])
-        )
+        unit = self._connection.for_unit(entry.data[CONF_UNIT_ID])
+        self._inverter = SungrowSGInverter(unit)
+        # Separate Component sharing the same unit: SungrowSGControl's
+        # fields live in the holding register space (writable), while
+        # SungrowSGInverter's are all input (read-only) - see
+        # SungrowSGControl's docstring for why they can't be one Component.
+        self._control = SungrowSGControl(unit)
         # Only actually poll the registers the enabled sensor groups need -
         # e.g. a unit with no CT/meter accessory can otherwise read zeros
         # or garbage on the meter block for no benefit (see
@@ -74,16 +87,42 @@ class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             await self._inverter.async_update()
+            await self._control.async_update()
         except ModbusError as err:
             raise UpdateFailed(f"Error communicating with inverter: {err}") from err
 
         inverter = self._inverter
+        control = self._control
         return {
+            # Writable controls (holding registers). start_stop/
+            # power_limitation_switch/night_svg_switch come back from the
+            # register as raw enum ints (0xCF/0xCE, 0xAA/0x55) - turned
+            # into plain bools here so switch.py doesn't need to know the
+            # magic numbers, matching what SungrowSGControl.write()
+            # accepts on the way in (see models.py _validate_start_stop).
+            "start_stop_is_running": _is_enabled(control.start_stop, on=0xCF),
+            "power_limitation_enabled": _is_enabled(
+                control.power_limitation_switch, on=0xAA
+            ),
+            "power_limitation_setting": control.power_limitation_setting,
+            "power_limitation_adjustment": control.power_limitation_adjustment,
+            "feed_in_power_limit_enabled": _is_enabled(
+                control.feed_in_power_limit_switch, on=0xAA
+            ),
+            "feed_in_power_limit_value": control.feed_in_power_limit_value,
+            "feed_in_power_limit_ratio": control.feed_in_power_limit_ratio,
+            "night_svg_enabled": _is_enabled(control.night_svg_switch, on=0xAA),
             # Identification - used for DeviceInfo (model/sw_version/
             # serial_number), not exposed as separate sensor entities.
             "model_name": inverter.model_name,
             "serial_number": inverter.serial_number,
             "protocol_version": inverter.protocol_version,
+            # Newly documented in the V1.1.80 protocol doc (2026-03-27) -
+            # meaning of "protocol_no" beyond the register table itself is
+            # undocumented, exposed as-is as a diagnostic sensor.
+            "protocol_no": inverter.protocol_no,
+            "arm_software_version": inverter.arm_software_version,
+            "dsp_software_version": inverter.dsp_software_version,
             # AC measurements
             "phase_a_voltage": inverter.phase_a_voltage,
             "phase_b_voltage": inverter.phase_b_voltage,
@@ -135,12 +174,59 @@ class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "nominal_active_power": inverter.nominal_active_power,
             "nominal_reactive_power": inverter.nominal_reactive_power,
             "array_insulation_resistance": inverter.array_insulation_resistance,
+            "daily_running_time": inverter.daily_running_time,
+            "monthly_power_yield": inverter.monthly_power_yield,
             "work_state_1_label": inverter.work_state_1_label,
             "work_state_2": inverter.work_state_2,
+            "is_grid_connected": inverter.is_grid_connected,
+            "is_in_fault": inverter.is_in_fault,
             "output_type_label": inverter.output_type_label,
+            "fault_alarm_time": inverter.fault_alarm_time,
+            "fault_alarm_label": inverter.fault_alarm_label,
         }
 
     async def async_shutdown(self) -> None:
         """Stop polling and close the shared Modbus connection."""
         await super().async_shutdown()
         await self._connection.close()
+
+    async def _async_write_control(self, field: str, value: Any) -> None:
+        """Write one SungrowSGControl field, then refresh so entities
+        reflect the confirmed new state (not an optimistic guess) - see
+        registers.py's "do not touch until confirmed" caution on these.
+
+        Raises HomeAssistantError (not a raw ModbusError/ValueError) so
+        switch/number entities show the user a real error instead of an
+        unhandled-exception log entry.
+        """
+        try:
+            await self._control.write(field, value)
+        except (ModbusError, ValueError) as err:
+            raise HomeAssistantError(
+                f"Failed to write {field} to the inverter: {err}"
+            ) from err
+        await self.async_request_refresh()
+
+    async def async_set_start_stop(self, *, running: bool) -> None:
+        await self._async_write_control("start_stop", running)
+
+    async def async_set_power_limitation_enabled(self, *, enabled: bool) -> None:
+        await self._async_write_control("power_limitation_switch", enabled)
+
+    async def async_set_power_limitation_setting(self, percent: float) -> None:
+        await self._async_write_control("power_limitation_setting", percent)
+
+    async def async_set_power_limitation_adjustment(self, kw: float) -> None:
+        await self._async_write_control("power_limitation_adjustment", kw)
+
+    async def async_set_feed_in_power_limit_enabled(self, *, enabled: bool) -> None:
+        await self._async_write_control("feed_in_power_limit_switch", enabled)
+
+    async def async_set_feed_in_power_limit_value(self, kw: float) -> None:
+        await self._async_write_control("feed_in_power_limit_value", kw)
+
+    async def async_set_feed_in_power_limit_ratio(self, percent: float) -> None:
+        await self._async_write_control("feed_in_power_limit_ratio", percent)
+
+    async def async_set_night_svg_enabled(self, *, enabled: bool) -> None:
+        await self._async_write_control("night_svg_switch", enabled)

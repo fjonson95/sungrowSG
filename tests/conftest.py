@@ -141,6 +141,9 @@ EXPECTED_READINGS: dict[str, object] = {
     "model_name": "SG12RT",
     "serial_number": "A2322404773",
     "protocol_version": "1.1.25.0",
+    "protocol_no": 1,
+    "arm_software_version": "ARM_V11_A",
+    "dsp_software_version": "DSP_V11_A",
     "phase_a_voltage": 233.6,
     "phase_b_voltage": 236.6,
     "phase_c_voltage": 234.4,
@@ -151,7 +154,7 @@ EXPECTED_READINGS: dict[str, object] = {
     "total_reactive_power": 4,
     "total_apparent_power": 3370,
     "power_factor": 1.0,
-    "grid_frequency": 49.9,
+    "grid_frequency": 49.99,
     "mppt_1_voltage": 632.1,
     "mppt_1_current": 3.1,
     "mppt_1_power": 1959.5,  # calculated: mppt_1_voltage * mppt_1_current
@@ -170,6 +173,8 @@ EXPECTED_READINGS: dict[str, object] = {
     "daily_power_yield": 8.4,
     "total_power_yield": 38258.3,
     "total_running_time": 12228,
+    "daily_running_time": 837,
+    "monthly_power_yield": 1700.0,
     "meter_power": 150,
     "meter_a_phase_power": 200,
     "meter_b_phase_power": -100,
@@ -187,7 +192,22 @@ EXPECTED_READINGS: dict[str, object] = {
     "array_insulation_resistance": 1748,
     "work_state_1_label": "run",
     "work_state_2": 0x20001,
+    "is_grid_connected": True,
+    "is_in_fault": False,
     "output_type_label": "three_phase_4l",
+    # No fault/alarm recorded - healthy inverter, year/code both 0.
+    "fault_alarm_time": None,
+    "fault_alarm_label": None,
+    # Writable controls (holding registers) - live-confirmed default
+    # state on a real SG12RT 2026-08-30: running, both switches disabled.
+    "start_stop_is_running": True,
+    "power_limitation_enabled": False,
+    "power_limitation_setting": 100.0,
+    "power_limitation_adjustment": 0.0,
+    "feed_in_power_limit_enabled": False,
+    "feed_in_power_limit_value": 0.0,
+    "feed_in_power_limit_ratio": 100.0,
+    "night_svg_enabled": False,
 }
 
 
@@ -197,6 +217,11 @@ def populate_realistic_readings(unit: MockModbusUnit) -> None:
     for i, word in enumerate(_ascii_words("A2322404773")):
         unit.input[reg.SERIAL_NUMBER.address + i] = word
     _write_le32(unit, reg.PROTOCOL_VERSION, 0x01011900)  # V1.1.25.0
+    _write_le32(unit, reg.PROTOCOL_NO, 1)
+    for i, word in enumerate(_ascii_words("ARM_V11_A")):
+        unit.input[reg.ARM_SOFTWARE_VERSION.address + i] = word
+    for i, word in enumerate(_ascii_words("DSP_V11_A")):
+        unit.input[reg.DSP_SOFTWARE_VERSION.address + i] = word
 
     unit.input[reg.NOMINAL_ACTIVE_POWER.address] = 120  # 12.0 kW
     unit.input[reg.OUTPUT_TYPE.address] = 1  # 3P4L
@@ -204,6 +229,8 @@ def populate_realistic_readings(unit: MockModbusUnit) -> None:
     unit.input[reg.DAILY_POWER_YIELD.address] = 84
     _write_le32(unit, reg.TOTAL_POWER_YIELD, 382583)
     _write_le32(unit, reg.TOTAL_RUNNING_TIME, 12228)
+    unit.input[reg.DAILY_RUNNING_TIME.address] = 837
+    _write_le32(unit, reg.MONTHLY_POWER_YIELD, 17000)
 
     unit.input[reg.INTERNAL_TEMPERATURE.address] = 447
     _write_le32(unit, reg.TOTAL_APPARENT_POWER, 3370)
@@ -224,10 +251,12 @@ def populate_realistic_readings(unit: MockModbusUnit) -> None:
     _write_le32(unit, reg.TOTAL_ACTIVE_POWER, 3370)
     _write_le32(unit, reg.TOTAL_REACTIVE_POWER, 4)
     unit.input[reg.POWER_FACTOR.address] = 1000
-    unit.input[reg.GRID_FREQUENCY.address] = 499
+    unit.input[reg.GRID_FREQUENCY.address] = 4999  # scale 0.01Hz
 
     unit.input[reg.WORK_STATE_1.address] = 0x0  # run
     _write_le32(unit, reg.WORK_STATE_2, 0x20001)  # running + grid connected
+    unit.input[reg.FAULT_ALARM_YEAR.address] = 0  # no fault/alarm recorded
+    unit.input[reg.FAULT_ALARM_CODE.address] = 0
     unit.input[reg.NOMINAL_REACTIVE_POWER.address] = 60
     unit.input[reg.ARRAY_INSULATION_RESISTANCE.address] = 1748
 
@@ -249,6 +278,16 @@ def populate_realistic_readings(unit: MockModbusUnit) -> None:
 
     unit.input[reg.NEGATIVE_VOLTAGE_TO_GROUND.address] = 0
     unit.input[reg.BUS_VOLTAGE.address] = 6770
+
+    # Writable controls - holding registers, not input.
+    unit.holding[reg.START_STOP.address] = 0xCF  # running
+    unit.holding[reg.POWER_LIMITATION_SWITCH.address] = 0x55  # disabled
+    unit.holding[reg.POWER_LIMITATION_SETTING.address] = 1000  # 100.0%
+    unit.holding[reg.POWER_LIMITATION_ADJUSTMENT.address] = 0  # 0.0 kW
+    unit.holding[reg.FEED_IN_POWER_LIMIT_SWITCH.address] = 0x55  # disabled
+    unit.holding[reg.FEED_IN_POWER_LIMIT_VALUE.address] = 0  # 0.00 kW
+    unit.holding[reg.FEED_IN_POWER_LIMIT_RATIO.address] = 1000  # 100.0%
+    unit.holding[reg.NIGHT_SVG_SWITCH.address] = 0x55  # disabled
 
 
 @pytest.fixture

@@ -64,6 +64,8 @@
       "daily_power_yield": { "name": "Dagens produktion" },
       "total_power_yield": { "name": "Total produktion" },
       "total_running_time": { "name": "Total drifttid" },
+      "daily_running_time": { "name": "Dagens drifttid" },
+      "monthly_power_yield": { "name": "Denna månads produktion" },
       "meter_power": { "name": "Elmätareffekt" },
       "meter_a_phase_power": { "name": "Elmätare fas A-effekt" },
       "meter_b_phase_power": { "name": "Elmätare fas B-effekt" },
@@ -79,6 +81,9 @@
       "nominal_active_power": { "name": "Märkeffekt" },
       "nominal_reactive_power": { "name": "Märkreaktiveffekt" },
       "array_insulation_resistance": { "name": "Isolationsresistans" },
+      "protocol_no": { "name": "Protokollnummer" },
+      "arm_software_version": { "name": "ARM-mjukvaruversion" },
+      "dsp_software_version": { "name": "DSP-mjukvaruversion" },
       "work_state_2": { "name": "Driftstatus (bitmask)" },
       "work_state_1_label": {
         "name": "Driftstatus",
@@ -98,6 +103,8 @@
           "unknown": "Okänd"
         }
       },
+      "fault_alarm_label": { "name": "Senaste fel/larm" },
+      "fault_alarm_time": { "name": "Senaste fel/larm-tid" },
       "output_type_label": {
         "name": "Utgångstyp",
         "state": {
@@ -107,6 +114,22 @@
           "unknown": "Okänd"
         }
       }
+    },
+    "binary_sensor": {
+      "is_grid_connected": { "name": "Nätansluten" },
+      "is_in_fault": { "name": "Fel" }
+    },
+    "switch": {
+      "start_stop": { "name": "Drift" },
+      "power_limitation_switch": { "name": "Effektbegränsning aktiverad" },
+      "feed_in_power_limit_switch": { "name": "Nätinmatningsbegränsning aktiverad" },
+      "night_svg_switch": { "name": "Night SVG" }
+    },
+    "number": {
+      "power_limitation_setting": { "name": "Effektbegränsningsnivå" },
+      "power_limitation_adjustment": { "name": "Effektbegränsning (absolut, kW)" },
+      "feed_in_power_limit_value": { "name": "Nätinmatningsbegränsning (absolut, kW)" },
+      "feed_in_power_limit_ratio": { "name": "Nätinmatningsbegränsning (%)" }
     }
   }
 }

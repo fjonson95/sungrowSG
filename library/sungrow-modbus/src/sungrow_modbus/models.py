@@ -5,6 +5,12 @@ pyproject.toml). This module intentionally has zero Home Assistant imports —
 it should be usable from a plain script (see scripts/query.py) or from the
 HA integration in custom_components/sungrow_sg.
 
+FIELDS: addresses/types/scales come from `registers.py`, which is verified
+against Sungrow's official "Communication Protocol of Residential &
+Commercial PV Grid-Connected Inverters" (V1.1.80, 2026-03-27) - see that
+module's docstring for the full source chain. Do not hand-edit an
+address/type here without updating `registers.py` first.
+
 API SURFACE: confirmed against modbus-connection 4.10.0 actually installed
 (`pip install "modbus-connection[tmodbus]"`, Python 3.13) - Component base
 class, gauge()/uint32()/coil() field helpers, ModbusConnection.for_unit(),
@@ -18,7 +24,14 @@ from __future__ import annotations
 from modbus_connection.model import Component, gauge, int32, string, uint32
 
 from . import registers as reg
-from .const import DEVICE_TYPE_CODES, OUTPUT_TYPE_LABELS, WORK_STATE_1_LABELS
+from .const import (
+    DEVICE_TYPE_CODES,
+    FAULT_CODE_LABELS,
+    OUTPUT_TYPE_LABELS,
+    WORK_STATE_1_LABELS,
+    WORK_STATE_2_FAULT_BIT,
+    WORK_STATE_2_GRID_CONNECTED_BIT,
+)
 
 
 class SungrowSGInverter(Component):
@@ -47,11 +60,18 @@ class SungrowSGInverter(Component):
 
     device_type_code = gauge(reg.DEVICE_TYPE_CODE.address, scale=1)
     serial_number = string(reg.SERIAL_NUMBER.address, reg.SERIAL_NUMBER.count)
-    # "Reserved" in the official SG-string PDF - see registers.py
-    # PROTOCOL_VERSION docstring for where this address actually comes
-    # from. Packed as Major.Minor.Patch.Build bytes; decode via the
+    # Packed as Major.Minor.Patch.Build bytes; decode via the
     # protocol_version property below, not this raw field directly.
     protocol_version_raw = uint32(reg.PROTOCOL_VERSION.address, word_order="little")
+    # Undocumented beyond the register table itself - see registers.py
+    # PROTOCOL_NO docstring.
+    protocol_no = uint32(reg.PROTOCOL_NO.address, word_order="little")
+    arm_software_version = string(
+        reg.ARM_SOFTWARE_VERSION.address, reg.ARM_SOFTWARE_VERSION.count
+    )
+    dsp_software_version = string(
+        reg.DSP_SOFTWARE_VERSION.address, reg.DSP_SOFTWARE_VERSION.count
+    )
 
     nominal_active_power = gauge(
         reg.NOMINAL_ACTIVE_POWER.address,
@@ -140,7 +160,12 @@ class SungrowSGInverter(Component):
         reg.PHASE_C_CURRENT.address, scale=reg.PHASE_C_CURRENT.scale, unit=reg.PHASE_C_CURRENT.unit
     )
 
-    total_active_power = uint32(
+    # Doc (V1.1.80) lists this as S32, not U32 - a production inverter can
+    # legitimately export negative "active power" briefly (e.g. absorbing
+    # from the grid during certain fault/standby transitions), so this must
+    # be signed like total_reactive_power below or it would wrap to a huge
+    # positive value instead.
+    total_active_power = int32(
         reg.TOTAL_ACTIVE_POWER.address,
         scale=reg.TOTAL_ACTIVE_POWER.scale,
         unit=reg.TOTAL_ACTIVE_POWER.unit,
@@ -164,6 +189,19 @@ class SungrowSGInverter(Component):
     work_state_1 = gauge(reg.WORK_STATE_1.address, scale=1)
     work_state_2 = uint32(reg.WORK_STATE_2.address, word_order="little")
 
+    # Fault/alarm timestamp + code (doc 5039-5045) - "valid only when the
+    # device work state is fault (0x5500) or alarm (0x9100)" per the doc,
+    # so these are stale/meaningless whenever work_state_1 isn't one of
+    # those two. Decode via fault_alarm_time/fault_alarm_label below, not
+    # these raw fields directly.
+    fault_alarm_year = gauge(reg.FAULT_ALARM_YEAR.address, scale=1)
+    fault_alarm_month = gauge(reg.FAULT_ALARM_MONTH.address, scale=1)
+    fault_alarm_day = gauge(reg.FAULT_ALARM_DAY.address, scale=1)
+    fault_alarm_hour = gauge(reg.FAULT_ALARM_HOUR.address, scale=1)
+    fault_alarm_minute = gauge(reg.FAULT_ALARM_MINUTE.address, scale=1)
+    fault_alarm_second = gauge(reg.FAULT_ALARM_SECOND.address, scale=1)
+    fault_alarm_code = gauge(reg.FAULT_ALARM_CODE.address, scale=1)
+
     nominal_reactive_power = gauge(
         reg.NOMINAL_REACTIVE_POWER.address,
         scale=reg.NOMINAL_REACTIVE_POWER.scale,
@@ -176,6 +214,15 @@ class SungrowSGInverter(Component):
         scale=reg.ARRAY_INSULATION_RESISTANCE.scale,
         unit=reg.ARRAY_INSULATION_RESISTANCE.unit,
         nan=0xFFFF,
+    )
+    daily_running_time = gauge(
+        reg.DAILY_RUNNING_TIME.address, scale=1, unit=reg.DAILY_RUNNING_TIME.unit
+    )
+    monthly_power_yield = uint32(
+        reg.MONTHLY_POWER_YIELD.address,
+        scale=reg.MONTHLY_POWER_YIELD.scale,
+        unit=reg.MONTHLY_POWER_YIELD.unit,
+        word_order="little",
     )
 
     # Per-string current ("combiner board information"). SG12RT has 3
@@ -258,19 +305,6 @@ class SungrowSGInverter(Component):
         unit=reg.BUS_VOLTAGE.unit,
     )
 
-    # Not wired as writable yet on purpose - see registers.py TODO on the
-    # "Control (writable, holding registers)" section. Left commented until
-    # confirmed safe on real hw. NIGHT_SVG_SWITCH is also a holding
-    # register (like START_STOP/POWER_LIMITATION_*) so it can't join this
-    # input-space Component anyway without a second Component - see the
-    # register_space comment above.
-    # power_limitation_setting = gauge(
-    #     reg.POWER_LIMITATION_SETTING.address,
-    #     scale=reg.POWER_LIMITATION_SETTING.scale,
-    #     unit=reg.POWER_LIMITATION_SETTING.unit,
-    #     writable=True,
-    # )
-
     @property
     def model_name(self) -> str:
         """Best-effort model name from the device type code register.
@@ -296,13 +330,64 @@ class SungrowSGInverter(Component):
 
     @property
     def work_state_1_label(self) -> str:
-        """Human-readable work_state_1 (Appendix 1) - "unknown" if unrecognized."""
+        """Human-readable work_state_1 (Appendix 2) - "unknown" if unrecognized."""
         return WORK_STATE_1_LABELS.get(int(self.work_state_1), "unknown")
+
+    @property
+    def is_grid_connected(self) -> bool | None:
+        """work_state_2 (Appendix 3) bit 17 - "Device is grid-connected
+        running". None before the first read.
+        """
+        state = self.work_state_2
+        if state is None:
+            return None
+        return bool(int(state) & (1 << WORK_STATE_2_GRID_CONNECTED_BIT))
+
+    @property
+    def is_in_fault(self) -> bool | None:
+        """work_state_2 (Appendix 3) bit 18 - "Device is in fault stop
+        state". None before the first read.
+        """
+        state = self.work_state_2
+        if state is None:
+            return None
+        return bool(int(state) & (1 << WORK_STATE_2_FAULT_BIT))
 
     @property
     def output_type_label(self) -> str:
         """Human-readable output_type - "unknown" if unrecognized."""
         return OUTPUT_TYPE_LABELS.get(int(self.output_type), "unknown")
+
+    @property
+    def fault_alarm_label(self) -> str | None:
+        """Human-readable fault_alarm_code (Appendix 4) - None when no
+        fault/alarm is recorded (code 0), "unknown" if the code isn't in
+        FAULT_CODE_LABELS. Per the doc this register is only meaningful
+        while work_state_1 reads fault (0x5500) or alarm (0x9100) - a
+        nonzero code left over from a past event may still be readable
+        outside those states, so check work_state_1_label too if you need
+        "is this fault currently active" rather than "most recent fault".
+        """
+        code = self.fault_alarm_code
+        if code is None or int(code) == 0:
+            return None
+        return FAULT_CODE_LABELS.get(int(code), "unknown")
+
+    @property
+    def fault_alarm_time(self) -> str | None:
+        """fault_alarm_year/month/.../second combined as "YYYY-MM-DD
+        HH:MM:SS" - None if the year field hasn't been read yet or reads
+        0 (no fault/alarm recorded). Same "only valid during fault/alarm
+        work state" caveat as fault_alarm_label.
+        """
+        year = self.fault_alarm_year
+        if year is None or int(year) == 0:
+            return None
+        return (
+            f"{int(year):04d}-{int(self.fault_alarm_month):02d}-"
+            f"{int(self.fault_alarm_day):02d} {int(self.fault_alarm_hour):02d}:"
+            f"{int(self.fault_alarm_minute):02d}:{int(self.fault_alarm_second):02d}"
+        )
 
     # --- Calculated power (no direct register - V * I) ---------------------------
     # None whenever either input is None: before the first async_update(),
@@ -346,3 +431,109 @@ class SungrowSGInverter(Component):
         if self.mppt_2_voltage is None or self.string_3_current is None:
             return None
         return round(self.mppt_2_voltage * self.string_3_current, 1)
+
+
+def _validate_start_stop(value: object) -> int:
+    """True starts the inverter (0xCF), False stops it (0xCE).
+
+    Strict `isinstance(value, bool)` on purpose: `bool(0xCE)` is `True`
+    (206 is truthy), so accepting any truthy/falsy value here would let a
+    caller who passes the raw "stop" code by mistake silently get
+    "start" instead - the exact kind of inversion that must never happen
+    on a grid-tied inverter's start/stop control.
+    """
+    if not isinstance(value, bool):
+        # ValueError, not TypeError: matches modbus_connection's own
+        # convention for "this value is invalid for this field" (see
+        # write_register_field's docstring on scaling failures).
+        raise ValueError(  # noqa: TRY004
+            f"start_stop must be a bool (True=start, False=stop), got {value!r}"
+        )
+    return 0xCF if value else 0xCE
+
+
+def _validate_enable_disable(value: object) -> int:
+    """0xAA = enable, 0x55 = disable - shared shape for
+    POWER_LIMITATION_SWITCH and NIGHT_SVG_SWITCH. Same strict-bool
+    reasoning as `_validate_start_stop`.
+    """
+    if not isinstance(value, bool):
+        raise ValueError(  # noqa: TRY004 - see _validate_start_stop
+            f"must be a bool (True=enable, False=disable), got {value!r}"
+        )
+    return 0xAA if value else 0x55
+
+
+class SungrowSGControl(Component):
+    """Writable Sungrow SG-series holding registers: start/stop, power
+    limitation (switch + %, or switch + absolute kW), feed-in power limit
+    (switch + %, or switch + absolute kW - a separate control point at the
+    grid connection, see registers.py FEED_IN_POWER_LIMIT_* docstring),
+    Night SVG.
+
+    A separate `Component` from `SungrowSGInverter` on purpose:
+    `register_space` is a class attribute, and these registers live in
+    the holding space (FC03/06/16) while every `SungrowSGInverter` field
+    is input (FC04) - see that class's `register_space` docstring. Build
+    both `Component`s around `ModbusConnection.for_unit(...)`'s SAME
+    `ModbusUnit` (calling `for_unit()` again for the same unit id returns
+    the cached instance) so they share one connection.
+
+    STATUS: address/scale/enum values are read directly from the
+    official protocol doc (see registers.py START_STOP/
+    POWER_LIMITATION_*/NIGHT_SVG_SWITCH docstrings) and cross-checked
+    live by *reading* each register against a real SG12RT - but no write
+    has been sent to real hardware yet. A wrong value here can disconnect
+    the inverter from the grid or stop production; the strict bool
+    validators above are a safety net, not a substitute for testing
+    cautiously against real hardware before relying on this.
+    """
+
+    register_space = "holding"
+
+    start_stop = gauge(reg.START_STOP.address, scale=1, writable=_validate_start_stop)
+    power_limitation_switch = gauge(
+        reg.POWER_LIMITATION_SWITCH.address, scale=1, writable=_validate_enable_disable
+    )
+    # No documented min/max found for this one (the doc's note "See
+    # Appendix 6" implies a model-specific range, unconfirmed for
+    # SG12RT) - relies on the inverter's own firmware to reject an
+    # out-of-range write rather than a guessed client-side limit that
+    # might be wrong in either direction.
+    power_limitation_setting = gauge(
+        reg.POWER_LIMITATION_SETTING.address,
+        scale=reg.POWER_LIMITATION_SETTING.scale,
+        unit=reg.POWER_LIMITATION_SETTING.unit,
+        writable=True,
+    )
+    night_svg_switch = gauge(
+        reg.NIGHT_SVG_SWITCH.address, scale=1, writable=_validate_enable_disable
+    )
+    # Alternative to power_limitation_setting's percentage - doc chapter
+    # 3.1.3 "Setting Power Limitation Value". Still requires
+    # power_limitation_switch=True first (same precondition as the
+    # percentage method, chapter 3.1.2) - this field doesn't enforce that
+    # itself, same as power_limitation_setting above.
+    power_limitation_adjustment = gauge(
+        reg.POWER_LIMITATION_ADJUSTMENT.address,
+        scale=reg.POWER_LIMITATION_ADJUSTMENT.scale,
+        unit=reg.POWER_LIMITATION_ADJUSTMENT.unit,
+        writable=True,
+    )
+    feed_in_power_limit_switch = gauge(
+        reg.FEED_IN_POWER_LIMIT_SWITCH.address,
+        scale=1,
+        writable=_validate_enable_disable,
+    )
+    feed_in_power_limit_value = gauge(
+        reg.FEED_IN_POWER_LIMIT_VALUE.address,
+        scale=reg.FEED_IN_POWER_LIMIT_VALUE.scale,
+        unit=reg.FEED_IN_POWER_LIMIT_VALUE.unit,
+        writable=True,
+    )
+    feed_in_power_limit_ratio = gauge(
+        reg.FEED_IN_POWER_LIMIT_RATIO.address,
+        scale=reg.FEED_IN_POWER_LIMIT_RATIO.scale,
+        unit=reg.FEED_IN_POWER_LIMIT_RATIO.unit,
+        writable=True,
+    )

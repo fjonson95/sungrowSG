@@ -8,8 +8,10 @@ against real hardware. It is not a substitute for that real-hardware test
 - see docs/register_map.md for the plan there.
 """
 
+import pytest
 from sungrow_modbus import SungrowSGInverter
 from sungrow_modbus import registers as reg
+from sungrow_modbus.models import SungrowSGControl
 
 
 async def test_reads_identity_and_measurements(mock_modbus_unit):
@@ -77,6 +79,81 @@ async def test_reads_protocol_version_and_bus_voltage(mock_modbus_unit):
     assert inverter.bus_voltage == 679.5
 
 
+def _ascii_words(text: str) -> list[int]:
+    """Pack ASCII text into 16-bit big-endian register words (2 chars each)."""
+    data = text.encode("ascii")
+    if len(data) % 2:
+        data += b"\x00"
+    return [(data[i] << 8) | data[i + 1] for i in range(0, len(data), 2)]
+
+
+async def test_reads_protocol_no_and_firmware_versions(mock_modbus_unit):
+    """Newly documented in protocol doc V1.1.80 (2026-03-27) - previously
+    an undocumented "Reserved" ASCII block, see registers.py.
+    """
+    mock_modbus_unit.input[reg.PROTOCOL_NO.address] = 1
+    mock_modbus_unit.input[reg.PROTOCOL_NO.address + 1] = 0
+    for i, word in enumerate(_ascii_words("ARM_V11_A")):
+        mock_modbus_unit.input[reg.ARM_SOFTWARE_VERSION.address + i] = word
+    for i, word in enumerate(_ascii_words("DSP_V11_A")):
+        mock_modbus_unit.input[reg.DSP_SOFTWARE_VERSION.address + i] = word
+
+    inverter = SungrowSGInverter(mock_modbus_unit)
+    await inverter.async_update()
+
+    assert inverter.protocol_no == 1
+    assert inverter.arm_software_version == "ARM_V11_A"
+    assert inverter.dsp_software_version == "DSP_V11_A"
+
+
+async def test_fault_alarm_label_and_time_decode(mock_modbus_unit):
+    mock_modbus_unit.input[reg.FAULT_ALARM_YEAR.address] = 2026
+    mock_modbus_unit.input[reg.FAULT_ALARM_MONTH.address] = 8
+    mock_modbus_unit.input[reg.FAULT_ALARM_DAY.address] = 30
+    mock_modbus_unit.input[reg.FAULT_ALARM_HOUR.address] = 14
+    mock_modbus_unit.input[reg.FAULT_ALARM_MINUTE.address] = 5
+    mock_modbus_unit.input[reg.FAULT_ALARM_SECOND.address] = 9
+    mock_modbus_unit.input[reg.FAULT_ALARM_CODE.address] = 8  # Grid Overfrequency
+
+    inverter = SungrowSGInverter(mock_modbus_unit)
+    await inverter.async_update()
+
+    assert inverter.fault_alarm_time == "2026-08-30 14:05:09"
+    assert inverter.fault_alarm_label == "Grid Overfrequency"
+
+
+async def test_fault_alarm_no_event_and_unknown_code(mock_modbus_unit):
+    # Year=0/code=0 is the "no fault recorded" state - not an all-zero
+    # coincidence, it's how a healthy inverter's registers read.
+    mock_modbus_unit.input[reg.FAULT_ALARM_YEAR.address] = 0
+    mock_modbus_unit.input[reg.FAULT_ALARM_CODE.address] = 0
+
+    inverter = SungrowSGInverter(mock_modbus_unit)
+    await inverter.async_update()
+
+    assert inverter.fault_alarm_time is None
+    assert inverter.fault_alarm_label is None
+
+    mock_modbus_unit.input[reg.FAULT_ALARM_CODE.address] = 65535  # not in the table
+    await inverter.async_update()
+    assert inverter.fault_alarm_label == "unknown"
+
+
+async def test_reads_daily_running_time_and_monthly_yield(mock_modbus_unit):
+    """Cross-checked against iSolarCloud (Sungrow's cloud UI) 2026-08-30:
+    "Daily operating time"/"Yield this month" matched these exactly.
+    """
+    mock_modbus_unit.input[reg.DAILY_RUNNING_TIME.address] = 837
+    mock_modbus_unit.input[reg.MONTHLY_POWER_YIELD.address] = 17000
+    mock_modbus_unit.input[reg.MONTHLY_POWER_YIELD.address + 1] = 0
+
+    inverter = SungrowSGInverter(mock_modbus_unit)
+    await inverter.async_update()
+
+    assert inverter.daily_running_time == 837
+    assert inverter.monthly_power_yield == 1700.0
+
+
 async def test_reads_dc_ac_and_status_fields(mock_modbus_unit):
     mock_modbus_unit.input[reg.NOMINAL_ACTIVE_POWER.address] = 120  # 12.0 kW
     mock_modbus_unit.input[reg.MPPT_1_VOLTAGE.address] = 6396
@@ -90,7 +167,7 @@ async def test_reads_dc_ac_and_status_fields(mock_modbus_unit):
     mock_modbus_unit.input[reg.TOTAL_DC_POWER.address + 1] = 0
     mock_modbus_unit.input[reg.TOTAL_REACTIVE_POWER.address] = 5
     mock_modbus_unit.input[reg.TOTAL_REACTIVE_POWER.address + 1] = 0
-    mock_modbus_unit.input[reg.GRID_FREQUENCY.address] = 499
+    mock_modbus_unit.input[reg.GRID_FREQUENCY.address] = 4999  # scale 0.01Hz
     mock_modbus_unit.input[reg.WORK_STATE_1.address] = 0
     # bit 0 (running) + bit 17 (grid connected) = 0x20001, live-confirmed
     # against a real SG12RT during normal daytime operation.
@@ -111,11 +188,29 @@ async def test_reads_dc_ac_and_status_fields(mock_modbus_unit):
     assert inverter.phase_a_current == 4.8
     assert inverter.total_dc_power == 3554
     assert inverter.total_reactive_power == 5
-    assert inverter.grid_frequency == 49.9
+    assert inverter.grid_frequency == 49.99
     assert inverter.work_state_1 == 0
     assert inverter.work_state_1_label == "run"
     assert inverter.work_state_2 == 0x20001
+    assert inverter.is_grid_connected is True
+    assert inverter.is_in_fault is False
     assert inverter.array_insulation_resistance is None
+
+
+async def test_work_state_2_fault_bit_and_before_first_update(mock_modbus_unit):
+    assert SungrowSGInverter(mock_modbus_unit).is_grid_connected is None
+    assert SungrowSGInverter(mock_modbus_unit).is_in_fault is None
+
+    # bit 18 (fault) set, bit 17 (grid connected) not set - 0x40000.
+    mock_modbus_unit.input[reg.WORK_STATE_2.address] = 0x0000
+    mock_modbus_unit.input[reg.WORK_STATE_2.address + 1] = 0x0004
+
+    inverter = SungrowSGInverter(mock_modbus_unit)
+    await inverter.async_update()
+
+    assert inverter.work_state_2 == 0x40000
+    assert inverter.is_grid_connected is False
+    assert inverter.is_in_fault is True
 
 
 async def test_calculated_string_power_uses_the_right_mppt_voltage(mock_modbus_unit):
@@ -185,3 +280,124 @@ async def test_reads_target_the_input_register_space(mock_modbus_unit):
     assert all(
         event.register_type == "input" for event in mock_modbus_unit.read_events
     )
+
+
+# --- SungrowSGControl (writable holding registers) ------------------------------
+
+
+async def test_control_reads_target_the_holding_register_space(mock_modbus_unit):
+    """SungrowSGControl must read FC03 (holding), not FC04 (input) - the
+    opposite of SungrowSGInverter, and the whole reason it's a separate
+    Component (register_space is a class attribute, can't mix per-field).
+    """
+    control = SungrowSGControl(mock_modbus_unit)
+    await control.async_update()
+
+    assert mock_modbus_unit.read_events
+    assert all(
+        event.register_type == "holding" for event in mock_modbus_unit.read_events
+    )
+
+
+async def test_control_reads_current_values(mock_modbus_unit):
+    mock_modbus_unit.holding[reg.START_STOP.address] = 0xCF
+    mock_modbus_unit.holding[reg.POWER_LIMITATION_SWITCH.address] = 0x55
+    mock_modbus_unit.holding[reg.POWER_LIMITATION_SETTING.address] = 500  # 50.0%
+    mock_modbus_unit.holding[reg.NIGHT_SVG_SWITCH.address] = 0x55
+    mock_modbus_unit.holding[reg.POWER_LIMITATION_ADJUSTMENT.address] = 84  # 8.4 kW
+    mock_modbus_unit.holding[reg.FEED_IN_POWER_LIMIT_SWITCH.address] = 0x55
+    mock_modbus_unit.holding[reg.FEED_IN_POWER_LIMIT_VALUE.address] = 1200  # 12.00 kW
+    mock_modbus_unit.holding[reg.FEED_IN_POWER_LIMIT_RATIO.address] = 1000  # 100.0%
+
+    control = SungrowSGControl(mock_modbus_unit)
+    await control.async_update()
+
+    assert int(control.start_stop) == 0xCF
+    assert int(control.power_limitation_switch) == 0x55
+    assert control.power_limitation_setting == 50.0
+    assert int(control.night_svg_switch) == 0x55
+    assert control.power_limitation_adjustment == 8.4
+    assert int(control.feed_in_power_limit_switch) == 0x55
+    assert control.feed_in_power_limit_value == 12.0
+    assert control.feed_in_power_limit_ratio == 100.0
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "raw"),
+    [
+        ("start_stop", True, 0xCF),
+        ("start_stop", False, 0xCE),
+        ("power_limitation_switch", True, 0xAA),
+        ("power_limitation_switch", False, 0x55),
+        ("night_svg_switch", True, 0xAA),
+        ("night_svg_switch", False, 0x55),
+        ("feed_in_power_limit_switch", True, 0xAA),
+        ("feed_in_power_limit_switch", False, 0x55),
+    ],
+)
+async def test_control_writes_encode_the_right_enum_value(
+    mock_modbus_unit, field, value, raw
+):
+    control = SungrowSGControl(mock_modbus_unit)
+    events = []
+    mock_modbus_unit.on_write(events.append)
+
+    await control.write(field, value)
+
+    assert len(events) == 1
+    assert events[0].values == [raw]
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "start_stop",
+        "power_limitation_switch",
+        "night_svg_switch",
+        "feed_in_power_limit_switch",
+    ],
+)
+@pytest.mark.parametrize("bad_value", [0xCF, 0xAA, 1, 0, "start", "true", None])
+async def test_control_rejects_anything_that_is_not_a_real_bool(
+    mock_modbus_unit, field, bad_value
+):
+    """The strict isinstance(value, bool) check is the whole safety net:
+    bool(0xCE) is True, so a raw register code passed by mistake must be
+    rejected outright, not silently coerced into the wrong command.
+    """
+    control = SungrowSGControl(mock_modbus_unit)
+
+    with pytest.raises(ValueError, match="must be a bool"):
+        await control.write(field, bad_value)
+
+
+async def test_control_power_limitation_setting_write_scales_correctly(
+    mock_modbus_unit,
+):
+    control = SungrowSGControl(mock_modbus_unit)
+    events = []
+    mock_modbus_unit.on_write(events.append)
+
+    await control.write("power_limitation_setting", 75.5)
+
+    assert events[0].values == [755]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "raw"),
+    [
+        ("power_limitation_adjustment", 8.4, 84),
+        ("feed_in_power_limit_value", 12.0, 1200),
+        ("feed_in_power_limit_ratio", 75.5, 755),
+    ],
+)
+async def test_control_absolute_and_feed_in_writes_scale_correctly(
+    mock_modbus_unit, field, value, raw
+):
+    control = SungrowSGControl(mock_modbus_unit)
+    events = []
+    mock_modbus_unit.on_write(events.append)
+
+    await control.write(field, value)
+
+    assert events[0].values == [raw]

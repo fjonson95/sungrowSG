@@ -58,7 +58,7 @@ async def test_all_descriptions_create_an_entity_with_the_right_state(
     entry = await _setup_entry(hass)
     entity_registry = er.async_get(hass)
 
-    assert len(SENSOR_DESCRIPTIONS) == 47
+    assert len(SENSOR_DESCRIPTIONS) == 54
 
     for description in SENSOR_DESCRIPTIONS:
         unique_id = f"{entry.entry_id}_{description.key}"
@@ -69,7 +69,9 @@ async def test_all_descriptions_create_an_entity_with_the_right_state(
         assert state is not None, f"{description.key!r} has no state"
 
         expected = EXPECTED_READINGS[description.key]
-        if isinstance(expected, float):
+        if expected is None:
+            assert state.state == "unknown"
+        elif isinstance(expected, float):
             assert float(state.state) == pytest.approx(expected)
         else:
             assert state.state == str(expected)
@@ -135,6 +137,12 @@ async def test_diagnostic_entities_are_categorized(
         "nominal_reactive_power",
         "array_insulation_resistance",
         "work_state_2",
+        "protocol_no",
+        "arm_software_version",
+        "dsp_software_version",
+        "daily_running_time",
+        "fault_alarm_label",
+        "fault_alarm_time",
     }
 
     for key in diagnostic_keys:

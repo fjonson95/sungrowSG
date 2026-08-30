@@ -8,19 +8,28 @@ körning — se `scripts/query.py`s utdata (körs mot din inverter, inte
 återgivet i sin helhet här eftersom listan är lång; se fältlistan
 nedan för vad som täcks).
 
-Detta hittade två riktiga buggar under vägen (se "Word order"- och
-`register_space`-avsnitten) — PDF-verifiering ensam hade inte fångat
-dem.
+Detta hittade tre riktiga buggar under vägen (se "Word order"-,
+`register_space`- och `total_active_power`-avsnitten) — PDF-verifiering
+ensam hade inte fångat dem alla; den sista hittades först vid en andra
+genomgång mot ett nyare, mer exakt dokument (V1.1.80).
 
 ## Källa
 
-[bohdan-s/Sungrow-Inverter](https://github.com/bohdan-s/Sungrow-Inverter/blob/main/Modbus%20Information/Communication%20Protocol%20of%20PV%20Grid-Connected%20String%20Inverters_V1.1.37_EN.pdf)
-speglar Sungrows officiella "Communication Protocol of PV Grid-Connected
-String Inverters" (V1.1.37 EN). Varje fält i
-`library/sungrow-modbus/src/sungrow_modbus/registers.py` är avläst direkt
-ur det dokumentets registertabeller (avsnitt 3.1 "Running information",
-avsnittet "a) Parameter setting" för skrivbara register) och Appendix 6
-(enhetskoder).
+Två officiella dokument, i tidsordning:
+
+1. [bohdan-s/Sungrow-Inverter](https://github.com/bohdan-s/Sungrow-Inverter/blob/main/Modbus%20Information/Communication%20Protocol%20of%20PV%20Grid-Connected%20String%20Inverters_V1.1.37_EN.pdf)
+   speglar Sungrows "Communication Protocol of PV Grid-Connected String
+   Inverters" (V1.1.37 EN) — den ursprungliga källan för nästan alla fält
+   nedan (avsnitt 3.1 "Running information", "a) Parameter setting" för
+   skrivbara register, Appendix 6 för enhetskoder).
+2. **"Communication Protocol of Residential & Commercial PV
+   Grid-Connected Inverters" (V1.1.80, 2026-03-27)** — en nyare, enhetlig
+   PDF som ersätter V1.1.37 och täcker alla Sungrow-familjer via en
+   gemensam Appendix 1. Hittad och genomgången 2026-08-30. Bekräftar
+   word-order- och adress-offset-reglerna nedan **explicit i klartext**
+   (tidigare bara hårdvarubekräftat empiriskt), och gav en riktig bugg-
+   fix (se "total_active_power" i tabellen nedan) samt fler enhetskoder
+   för RT-familjens regionvarianter (Australien, -P2).
 
 ## VIKTIGT: adress-offset (löst)
 
@@ -47,12 +56,17 @@ versioner av den här filen (och en tidigare passering i det här repot)
 blandade ihop detta — se git-historik om ni undrar varför adresserna
 ändrats fram och tillbaka.
 
-## VIKTIGT: word order på 32-bitars fält (löst, hårdvarubekräftat)
+## VIKTIGT: word order på 32-bitars fält (löst, hårdvaru- OCH dokumentbekräftat)
 
-Dokumentet säger inget om byte-/word-ordning för U32/S32-fält (t.ex.
-`total_active_power`, `total_power_yield`). `modbus_connection`s
-`uint32()` antar `word_order="big"` (högsta ordets register kommer
-först) som default. Mot den riktiga SG12RT:n gav det:
+V1.1.37-dokumentet (som resten av det här avsnittet handlar om) säger
+inget om byte-/word-ordning för U32/S32-fält (t.ex. `total_active_power`,
+`total_power_yield`). Det nyare V1.1.80-dokumentet gör det däremot,
+uttryckligen (avsnitt 1.1 Abbreviations): "U32: 32-bit unsigned integer;
+little-endian for double-word data. Big-endian for byte data." — dvs
+precis det som hittades empiriskt nedan är dokumenterat beteende, inte en
+den här enhetens/dongelns kvirk. `modbus_connection`s `uint32()` antar
+`word_order="big"` (högsta ordets register kommer först) som default. Mot
+den riktiga SG12RT:n gav det:
 
 - `total_active_power`: **99 418 112 W** (99 MW — orimligt för en 12kW-inverter)
 - `total_power_yield`: **359 720 550,9 kWh** (360 GWh — orimligt för en
@@ -71,57 +85,101 @@ TCP såsom testat här.
 
 ## Vad som är verifierat mot PDF:en
 
-Läs = FC04 (input registers), Skriv = FC03/06/16 (holding registers).
-Kolumnen "Wire-adress" är vad som faktiskt skickas (= dokumentadress − 1,
-vad `RegisterSpec.address` innehåller); "Dok.-adress" är numret som står
-i Sungrows tabell (`manufacturer_ref`).
+Input- och holding-register är helt separata adressrymder i Modbus (FC04
+resp. FC03/06/16) - samma nummer kan alltså dyka upp i båda tabellerna
+utan att vara en kollision (t.ex. doc-adress 5006/5008 finns i båda:
+`total_running_time`/`internal_temperature` som läsbara input-register,
+`start_stop`/`power_limitation_setting` som skrivbara holding-register).
+Båda tabellerna är sorterade i stigande dok.-adressordning. Kolumnen
+"Wire-adress" är vad som faktiskt skickas (= dokumentadress − 1, vad
+`RegisterSpec.address` innehåller); "Dok.-adress" är numret som står i
+Sungrows tabell (`manufacturer_ref`).
 
-| Fält | Dok.-adress | Wire-adress | Funktion | Typ | Skala | Enhet |
-|---|---|---|---|---|---|---|
-| serial_number | 4990-4999 | 4989 (10 reg) | Läs | UTF-8 | – | – |
-| device_type_code | 5000 | 4999 | Läs | U16 | – | – (0x2434 = SG12RT) |
-| nominal_active_power | 5001 | 5000 | Läs | U16 | 0.1 | kW |
-| output_type | 5002 | 5001 | Läs | U16 | – | enum |
-| daily_power_yield | 5003 | 5002 | Läs | U16 | 0.1 | kWh |
-| total_power_yield (legacy) | 5004-5005 | 5003 (2 reg) | Läs | U32 | 1 | kWh |
-| total_running_time | 5006-5007 | 5005 (2 reg) | Läs | U32 | 1 | h |
-| internal_temperature | 5008 | 5007 | Läs | S16 | 0.1 | °C |
-| total_apparent_power | 5009-5010 | 5008 (2 reg) | Läs | U32 | 1 | VA |
-| mppt_1_voltage / current | 5011 / 5012 | 5010 / 5011 | Läs | U16 | 0.1 | V / A |
-| mppt_2_voltage / current | 5013 / 5014 | 5012 / 5013 | Läs | U16 | 0.1 | V / A |
-| total_dc_power | 5017-5018 | 5016 (2 reg) | Läs | U32 | 1 | W |
-| phase_a/b/c_voltage | 5019/5020/5021 | 5018/5019/5020 | Läs | U16 | 0.1 | V |
-| phase_a/b/c_current | 5022/5023/5024 | 5021/5022/5023 | Läs | U16 | 0.1 | A |
-| total_active_power | 5031-5032 | 5030 (2 reg) | Läs | U32 | 1 | W |
-| total_reactive_power | 5033-5034 | 5032 (2 reg) | Läs | S32 | 1 | Var |
-| power_factor | 5035 | 5034 | Läs | S16 | 0.001 | – |
-| grid_frequency | 5036 | 5035 | Läs | U16 | 0.1 | Hz |
-| work_state_1 | 5038 | 5037 | Läs | U16 | – | enum |
-| nominal_reactive_power | 5049 | 5048 | Läs | U16 | 0.1 | kVar |
-| array_insulation_resistance | 5071 | 5070 | Läs | U16 | 1 | kΩ |
-| work_state_2 | 5081-5082 | 5080 (2 reg) | Läs | U32 | – | bitmask |
-| total_power_yield (RT-familjen, exakt) | 5144-5145 | 5143 (2 reg) | Läs | U32 | 0.1 | kWh |
-| string_1/2/3_current | 7013/7014/7015 | 7012/7013/7014 | Läs | U16 | 0.01 | A |
-| meter_power | 5083-5084 | 5082 (2 reg) | Läs | S32 | 1 | W |
-| meter_a/b/c_phase_power | 5085-5090 | 5084/5086/5088 (2 reg vardera) | Läs | S32 | 1 | W |
-| load_power | 5091-5092 | 5090 (2 reg) | Läs | S32 | 1 | W |
-| daily/total_export_energy | 5093-5096 | 5092/5094 (2 reg vardera) | Läs | U32 | 0.1 | kWh |
-| daily/total_import_energy | 5097-5100 | 5096/5098 (2 reg vardera) | Läs | U32 | 0.1 | kWh |
-| daily/total_direct_energy_consumption | 5101-5104 | 5100/5102 (2 reg vardera) | Läs | U32 | 0.1 | kWh |
-| protocol_version | 4952-4953 | 4951 (2 reg) | Läs | U32 | – | Major.Minor.Patch.Build-bytes, ej skala (se not nedan) |
-| negative_voltage_to_ground | 5146 | 5145 | Läs | S16 | 0.1 | V |
-| bus_voltage | 5147 | 5146 | Läs | U16 | 0.1 | V |
-| start_stop | 5006 | 5005 | Skriv | U16 | – | enum (0xCF=start, 0xCE=stop) |
-| power_limitation_switch | 5007 | 5006 | Skriv | U16 | – | enum (0xAA=enable, 0x55=disable) |
-| power_limitation_setting | 5008 | 5007 | Skriv | U16 | 0.1 | % |
-| night_svg_switch | 5035 | 5034 | Skriv | U16 | – | enum (0xAA=enable, 0x55=disable) |
+### Input-register (FC04, läsning)
 
-SG12RT har **2 MPPT-ingångar** (bekräftat i Appendix 6, device code
+| Fält | Dok.-adress | Wire-adress | Typ | Skala | Enhet |
+|---|---|---|---|---|---|
+| protocol_no | 4950-4951 | 4949 (2 reg) | U32 | – | Betydelse odokumenterad (se not nedan) |
+| protocol_version | 4952-4953 | 4951 (2 reg) | U32 | – | Major.Minor.Patch.Build-bytes, ej skala (se not nedan) |
+| arm_software_version | 4954-4968 | 4953 (15 reg) | UTF-8 | – | (se not nedan) |
+| dsp_software_version | 4969-4983 | 4968 (15 reg) | UTF-8 | – | (se not nedan) |
+| serial_number | 4990-4999 | 4989 (10 reg) | UTF-8 | – | – |
+| device_type_code | 5000 | 4999 | U16 | – | – (0x2434 = SG12RT) |
+| nominal_active_power | 5001 | 5000 | U16 | 0.1 | kW |
+| output_type | 5002 | 5001 | U16 | – | enum |
+| daily_power_yield | 5003 | 5002 | U16 | 0.1 | kWh |
+| total_power_yield (legacy) | 5004-5005 | 5003 (2 reg) | U32 | 1 | kWh |
+| total_running_time | 5006-5007 | 5005 (2 reg) | U32 | 1 | h |
+| internal_temperature | 5008 | 5007 | S16 | 0.1 | °C |
+| total_apparent_power | 5009-5010 | 5008 (2 reg) | U32 | 1 | VA |
+| mppt_1_voltage / current | 5011 / 5012 | 5010 / 5011 | U16 | 0.1 | V / A |
+| mppt_2_voltage / current | 5013 / 5014 | 5012 / 5013 | U16 | 0.1 | V / A |
+| total_dc_power | 5017-5018 | 5016 (2 reg) | U32 | 1 | W |
+| phase_a/b/c_voltage | 5019/5020/5021 | 5018/5019/5020 | U16 | 0.1 | V |
+| phase_a/b/c_current | 5022/5023/5024 | 5021/5022/5023 | U16 | 0.1 | A |
+| total_active_power | 5031-5032 | 5030 (2 reg) | S32 | 1 | W |
+| total_reactive_power | 5033-5034 | 5032 (2 reg) | S32 | 1 | Var |
+| power_factor | 5035 | 5034 | S16 | 0.001 | – |
+| work_state_1 | 5038 | 5037 | U16 | – | enum |
+| fault_alarm_year/month/day/hour/minute/second | 5039-5044 | 5038-5043 | U16 vardera | – | Endast giltiga när work_state_1 = fault/alarm |
+| fault_alarm_code | 5045 | 5044 | U16 | – | Se Appendix 4-tabellen nedan |
+| nominal_reactive_power | 5049 | 5048 | U16 | 0.1 | kVar |
+| array_insulation_resistance | 5071 | 5070 | U16 | 1 | kΩ |
+| work_state_2 | 5081-5082 | 5080 (2 reg) | U32 | – | bitmask |
+| meter_power | 5083-5084 | 5082 (2 reg) | S32 | 1 | W |
+| meter_a/b/c_phase_power | 5085-5090 | 5084/5086/5088 (2 reg vardera) | S32 | 1 | W |
+| load_power | 5091-5092 | 5090 (2 reg) | S32 | 1 | W |
+| daily/total_export_energy | 5093-5096 | 5092/5094 (2 reg vardera) | U32 | 0.1 | kWh |
+| daily/total_import_energy | 5097-5100 | 5096/5098 (2 reg vardera) | U32 | 0.1 | kWh |
+| daily/total_direct_energy_consumption | 5101-5104 | 5100/5102 (2 reg vardera) | U32 | 0.1 | kWh |
+| daily_running_time | 5113 | 5112 | U16 | 1 | min |
+| monthly_power_yield | 5128-5129 | 5127 (2 reg) | U32 | 0.1 | kWh |
+| total_power_yield (RT-familjen, exakt) | 5144-5145 | 5143 (2 reg) | U32 | 0.1 | kWh |
+| negative_voltage_to_ground | 5146 | 5145 | S16 | 0.1 | V |
+| bus_voltage | 5147 | 5146 | U16 | 0.1 | V |
+| grid_frequency | 5148 | 5147 | U16 | 0.01 | Hz (se not nedan om 5036) |
+| string_1/2/3_current | 7013/7014/7015 | 7012/7013/7014 | U16 | 0.01 | A |
+
+### Holding-register (FC03/06/16, läs- och skrivbara)
+
+| Fält | Dok.-adress | Wire-adress | Typ | Skala | Enhet |
+|---|---|---|---|---|---|
+| start_stop | 5006 | 5005 | U16 | – | enum (0xCF=start, 0xCE=stop) |
+| power_limitation_switch | 5007 | 5006 | U16 | – | enum (0xAA=enable, 0x55=disable) |
+| power_limitation_setting | 5008 | 5007 | U16 | 0.1 | % |
+| feed_in_power_limit_switch | 5010 | 5009 | U16 | – | enum (0xAA=enable, 0x55=disable) |
+| feed_in_power_limit_value | 5011 | 5010 | U16 | 0.01 | kW |
+| feed_in_power_limit_ratio | 5015 | 5014 | U16 | 0.1 | % |
+| power_limitation_adjustment | 5039 | 5038 | U16 | 0.1 | kW |
+| night_svg_switch | 5035 | 5034 | U16 | – | enum (0xAA=enable, 0x55=disable) |
+
+Alla åtta ovan är skrivbara (`RegisterSpec.writable=True`) och wired in i
+`SungrowSGControl` (`register_space = "holding"`) - se
+"skrivbara holding-register"-avsnittet i "Att göra" nedan för status.
+
+**`total_active_power` var felaktigt `uint32()` (skulle vara `int32()`)**
+— hittat 2026-08-30 vid genomgång av V1.1.80-dokumentet, som listar
+5031-5032 som `S32` explicit (V1.1.37 hade ingen tydlig typmarkering här
+som fångades vid ursprunglig genomgång). Fixat i `models.py`. Spelar roll
+eftersom invertern kan rapportera kortvarigt negativ aktiv effekt vid
+vissa fel-/vänteläges-övergångar — som `uint32` hade det wrappat till ett
+orimligt stort positivt värde istället för ett litet negativt.
+
+SG12RT har **2 MPPT-ingångar** (bekräftat i Appendix 1, device code
 `0x2434`) — `mppt_3_voltage`/`mppt_3_current` m.fl. finns i kartan för
 större SG-modeller men gäller inte SG12RT.
 
-Samtliga device-typkoder för RT-familjen i `const.py` (`0x243D`–`0x2437`
-för SG3.0RT–SG20RT) är avlästa direkt ur Appendix 6.
+Samtliga device-typkoder för RT-familjen i `const.py` (`0x243D`–`0x2439`
+för SG3.0RT–SG25RT) är avlästa direkt ur Appendix 1. Sungrow återanvänder
+samma modellnamn (t.ex. "SG12RT") över flera regionvarianter med olika
+device-typkoder — V1.1.80s Appendix 1 listar en "Overseas"-standardvariant
+och en separat "Australian"-variant per effektklass, plus "-20"/"-P2"-
+hårdvaruvarianter. Vår enhet läser `0x2434` (Overseas-standard, matchar
+även Kina-varianten "SG12RT-20") — `0x2481` (Australien) och `0x2444`
+(-P2) är andra RT-enheter som andra användare av biblioteket kan ha,
+tillagda i `const.py` med samma modellnamn eftersom skillnaden bara
+gäller effektbegränsningens tillåtna intervall, som det här biblioteket
+inte styr mot.
 
 ### Per-sträng ström (inte spänning) — 2026-08-30
 
@@ -189,12 +247,156 @@ i övrigt bygger på, rimligt för en inverter med något äldre firmware än
 senaste protokolldokumentet. `models.py` exponerar både råvärdet
 (`protocol_version_raw`) och en formaterad `protocol_version`-property.
 
-Sedan tidigare vet vi också att det reserverade blocket 4950-4989 i
-övrigt innehåller läsbar ASCII-text som ser ut som
-firmware-versionstaggar (`"...LCD_BERYL-S_V11_V01_A"`,
-`"...DSP_BERYL-S_V11_V01_A"`) — dessa är fortfarande INTE tillagda
-någonstans, helt odokumenterade och fältgränserna rena gissningar. Säg
-till om ni vill ha dem inlagda ändå.
+### Appendix 2/3 (Working State 1/2) — 2026-08-30
+
+Genomgångna för första gången (tidigare bara refererade, aldrig lästa i
+sin helhet):
+
+- **Appendix 2 (Table 10, `work_state_1`)**: hittade ett saknat värde -
+  `0x1111` = "Uninitialized" - tillagt i `WORK_STATE_1_LABELS`
+  (`const.py`). Övriga 11 värden stämde redan.
+- **Appendix 3 (Table 11, `work_state_2`)**: bekräftar att `work_state_2`
+  är en **bitmask**, inte en enum - dokumentet säger uttryckligen "The
+  definition corresponding to the state is the same as that in Appendix
+  2", dvs bit 0-13 är samma tillstånd som `work_state_1` fast som
+  enskilda bitar (redundant mot `work_state_1_label`, avkodas inte
+  separat). De två unika, användbara bitarna är summeringsbitarna:
+  **bit 17** ("Device is grid-connected running") och **bit 18** ("Device
+  is in fault stop state"). Live-exemplet från tidigare i sessionen
+  (`0x20001`) är nu förklarat: bit 0 (run) + bit 17 (grid-connected).
+
+  Tillagt som två beräknade properties i `models.py`
+  (`is_grid_connected`, `is_in_fault`) och en ny `binary_sensor.py`-
+  plattform i HA-integrationen (device_class `connectivity` respektive
+  `problem`) - lämpligare entitetstyp för booleaner än en text-sensor.
+
+### Kapitel 3 "Power Regulation Parameters" — styrsekvenser och nya register, 2026-08-30
+
+V1.1.80 har ett helt kapitel (3.1 Active Power Regulation, 3.2 Reactive
+Power Regulation) som beskriver **hur** styrningen ska sekvenseras, inte
+bara adresserna - något vi inte läst igenom förrän nu.
+
+**Viktig sekvens-info för register vi redan hade (`power_limitation_switch`/
+`power_limitation_setting`):** `power_limitation_setting` (5008) är bara
+verksam när `power_limitation_switch` (5007) redan är aktiverad (0xAA) -
+dokumentets metod är uttryckligen tvåstegs: 1) aktivera switchen, 2) sätt
+värdet. Vår kod skriver fälten oberoende av varandra (ingen
+ordningskontroll i `SungrowSGControl`), så en integratör måste själv
+aktivera switchen först. Efter en omstart av invertern **återställs
+effektbegränsningen till default** om man inte separat aktiverat "Active
+Power Setting Persistence" via Sungrows app (finns inget Modbus-register
+för det - bara i appen).
+
+**Nytt, nu implementerat** (användaren valde dessa två grupper 2026-08-30):
+
+- **`power_limitation_adjustment`** (doc 5039, 0.1kW) - alternativ till
+  `power_limitation_setting`s procentvärde: sätter effektgränsen som ett
+  absolut kW-värde istället. Samma precondition (`power_limitation_switch`
+  måste vara på).
+- **Feed-in power limit-familjen** (`feed_in_power_limit_switch` 5010,
+  `feed_in_power_limit_value` 5011 i kW, `feed_in_power_limit_ratio` 5015
+  i %) - en **separat kontrollpunkt** vid nätanslutningspunkten (Point A i
+  dokumentets figur 1), skild från `power_limitation_*` som styr vid
+  inverterns egen AC-utgång (Point B). Kräver en extern smart-mätare
+  inkopplad för att vara meningsfull. Explicit listad som giltig för
+  SG3.0-25RT-familjen, som SG12RT tillhör.
+
+**Medvetet INTE implementerat** (användaren valde att bara dokumentera,
+inte wire in, dessa - kan läggas till senare om det behövs):
+
+- **Active Power Overload** (5020, 0xAA/0x55) - ändrar referensvärdet
+  `power_limitation_setting`s procent räknas mot (rated vs max effekt).
+- **All reaktiv-effekt-reglering** (kapitel 3.2, Table 6):
+  `reactive_power_adjustment_mode` (5036, växlar mellan av/PF/ratio/Q(P)-
+  kurva/Q(U)-kurva), `pf_setting` (5019), `reactive_power_percentage_
+  setting` (5037), `reactive_power_adjustment` (5040, absolut kVar), plus
+  Q(P)-kurva 1/2 (5048-5077, 5116-5134) och Q(U)-kurva 1/2 (5078-5115,
+  5135-5154) - stora egna parameterblock (se Appendix 6-9), inte bara
+  enkla enum/skalvärden.
+
+### Felkoder (Appendix 4) — 2026-08-30
+
+Fanns tidigare inte wired in alls: `fault_alarm_year/month/day/hour/
+minute/second` (doc 5039-5044) och `fault_alarm_code` (doc 5045) - enligt
+dokumentet giltiga "only when the device work state is fault (0x5500) or
+alarm (0x9100)". `fault_alarm_code` slår upp Appendix 4 "Device Fault
+Code" (Table 12), en tabell med ~30 unika felnamn mappade från hundratals
+enskilda koder/intervall (t.ex. "2, 3, 14, 15" → "Grid Overvoltage").
+Transkriberad ordagrant från V1.1.80 till `const.py`
+(`FAULT_CODE_LABELS`) - **inte hårdvarutestad** (kräver att man faktiskt
+framkallar ett fel på en riktig inverter, vilket inte görs här). En kod
+som saknas i tabellen ger `"unknown"`, aldrig en gissning eller krasch.
+
+`models.py` exponerar två beräknade properties istället för de råa
+fälten: `fault_alarm_time` (formaterad `"YYYY-MM-DD HH:MM:SS"`, `None`
+om år=0) och `fault_alarm_label` (uppslaget felnamn, `None` om kod=0).
+Wired in som två diagnostiska textsensorer i HA-integrationen.
+
+### Cross-check mot iSolarCloud — 2026-08-30
+
+Användaren delade en live-skärmdump från **iSolarCloud** (Sungrows eget
+moln-UI för den här specifika SG12RT:n, kväll/standby-läge). Resultat:
+
+- Bekräftade nätfrekvens-fyndet nedan (49.99 Hz → högupplöst register).
+- **"Daily operating time" (837 min) och "Yield this month" (1.7 MWh)**
+  matchade två register vi missat: `daily_running_time` (doc 5113) och
+  `monthly_power_yield` (doc 5128-5129) — nu tillagda, se tabellen ovan.
+- **"Yield this year" (11.3 MWh) finns inte som Modbus-register** i
+  dokumentet — det är ett molnsidesberäknat värde hos Sungrow, inte
+  tillgängligt lokalt över Modbus. Ingen ny fält-mappning möjlig här.
+- **Per-sträng-spänning i iSolarCloud (421.5 V för alla tre strängar)**
+  är INTE ett Modbus-register — dokumentets 7013-7036-block innehåller
+  bara STRÖM per sträng (se avsnittet "Per-sträng ström" ovan). Att
+  UI-värdet (421.5V) skilde sig från den samtidigt visade MPPT-spänningen
+  (412.3V) bekräftar att det är en molnsidesberäkning/annan källa, inte
+  bara en direkt-vidarebefordrad MPPT-spänning. Bekräftar att vår
+  tidigare slutsats (bara ström per sträng är läsbart) fortfarande
+  stämmer.
+- Firmware-strängarna i "Device information" (`LCD_BERYL-S_V11_V01_A`,
+  `MDSP_BERYL-S_V11_V01_A`) matchar formatet vi förväntar oss av
+  `arm_software_version`/`dsp_software_version` (se avsnittet om
+  protokollnummer nedan) - ännu inte läst live mot de nya fälten, men
+  ett gott tecken att de kommer avkodas rimligt.
+- Övriga värden (spänningar, isolationsresistans 1964 kΩ, total
+  produktion 38.3 MWh) var internt konsistenta med redan wired-in fält -
+  inga fler avvikelser hittade.
+
+### Nätfrekvens bytt till högupplöst register — 2026-08-30
+
+Upptäckt genom att jämföra vår sensor mot **iSolarCloud** (Sungrows eget
+moln-UI) live: iSolarCloud visade `49.99 Hz`, vår sensor skulle ha visat
+`50.0 Hz`. Orsak: dokumentet listar `grid_frequency` på **två** adresser
+med samma värde men olika upplösning — dok 5036 (`0.1Hz`, vad vi
+tidigare läste) och dok 5148 (`0.01Hz`), med noten "Compared with 'Grid
+frequency' 5148, only the resolution is different." iSolarCloud läser
+uppenbarligen 5148. Bytt `GRID_FREQUENCY` i `registers.py` till adress
+5148 (wire 5147, `scale=0.01`) — samma fältnamn i `models.py`, bara
+källadressen ändrad. 5036 lämnas odokumenterad i koden (samma värde, bara
+grövre) snarare än som ett eget fält.
+
+### Protokollnummer + ARM/DSP-mjukvaruversion — nyupptäckt i V1.1.80, 2026-08-30
+
+Vad som tidigare (V1.1.37, se avsnittet ovan) bara var ett odokumenterat
+"Reserved"-block med läsbar ASCII-text (firmware-versionstaggar som
+`"...LCD_BERYL-S_V11_V01_A"`, `"...DSP_BERYL-S_V11_V01_A"`, hittade live
+2026-08-30 men med rena gissningar på fältgränser) visar sig vara
+officiellt dokumenterat i V1.1.80s Table 3:
+
+| Fält | Dok.-adress | Wire-adress | Typ | Not |
+|---|---|---|---|---|
+| protocol_no | 4950-4951 | 4949 (2 reg) | U32 | Betydelse utöver registertabellen odokumenterad |
+| protocol_version | 4952-4953 | 4951 (2 reg) | U32 | Samma adress som redan wired in (se ovan) — nu officiellt dokumenterad, inte längre en gissning från en annan produktserie |
+| arm_software_version | 4954-4968 | 4953 (15 reg) | UTF-8 | |
+| dsp_software_version | 4969-4983 | 4968 (15 reg) | UTF-8 | |
+| (reserved) | 4984-4989 | 4983 (6 reg) | U16 | Fortfarande genuint "Reserved" per dokumentet |
+
+`protocol_no`, `arm_software_version`, `dsp_software_version` är nu
+wired in i `models.py` och exponerade som diagnostiska sensorer i
+HA-integrationen. Inte ännu läst mot riktig hårdvara (bara mot
+`MockModbusUnit`) — nästa gång du kör `scripts/query.py` mot din
+SG12RT är det värt att bekräfta att `arm_software_version`/
+`dsp_software_version` faktiskt matchar de ASCII-taggar som hittades
+live tidigare.
 
 ## Att göra
 
@@ -214,17 +416,28 @@ till om ni vill ha dem inlagda ändå.
    värden vid livetest — se `scripts/query.py`. `array_insulation_resistance`
    använder `nan=0xFFFF` per dokumentets "0xFFFF = invalid"-not, så en
    ogiltig avläsning blir `None` istället för en orimlig 6553.5 kΩ.
-5. **Kvarstår:** de skrivbara holding-registren
+5. ~~De skrivbara holding-registren
    (`start_stop`/`power_limitation_switch`/`power_limitation_setting`/
-   `night_svg_switch`) ligger fortfarande bara som metadata i
-   `registers.py`, inte wired in någonstans som skrivbara — de kräver en
-   egen `Component` (annan `register_space`) och ska INTE röras mot en
-   aktiv inverter utan att vara medveten om vad de gör: fel värde kan
-   koppla bort invertern från nätet eller stoppa produktionen.
-6. HA-integrationen (`custom_components/sungrow_sg/`) är fortfarande
-   skelett och exponerar bara de sex ursprungliga fälten som sensorer —
-   uppdatera `coordinator.py`/`sensor.py` för att plocka upp alla fält
-   som nu finns i `SungrowSGInverter`.
+   `night_svg_switch`)~~ — klart: egen `Component`
+   (`SungrowSGControl`, `register_space = "holding"`) i `models.py`,
+   med strikta `isinstance(value, bool)`-validerare på enum-fälten
+   (`start_stop`/`power_limitation_switch`/`feed_in_power_limit_switch`/
+   `night_svg_switch`) för att undvika att ett "sant"-värde som råkar
+   vara den numeriska stopp-koden (t.ex. `0xCE`, som är truthy i Python)
+   tolkas som start. Utökat 2026-08-30 med `power_limitation_adjustment`
+   (absolut kW) och hela feed-in power limit-familjen (kapitel 3.1, se
+   "Kapitel 3"-avsnittet ovan) — reaktiv-effekt-reglering (kapitel 3.2)
+   medvetet lämnad utanför. Wired in i HA-integrationen som `switch.py`
+   (start_stop primär, resten config-entity-kategori) och `number.py`
+   (power_limitation_setting/_adjustment,
+   feed_in_power_limit_value/_ratio). **Inga skrivningar har körts mot en
+   riktig inverter ännu** — adress/skala/enum-värden är avlästa ur
+   dokumentet och läsverifierade live, men själva skrivvägen är bara
+   testad mot `MockModbusConnection`.
+6. ~~HA-integrationen exponerar bara sex fält~~ — klart: `sensor.py`,
+   `switch.py`, `number.py` täcker alla fält i
+   `SungrowSGInverter`/`SungrowSGControl`, med config-flow-togglar för
+   att välja bort strängar/MPPT/elmätare.
 
 ## Kända osäkerheter
 
@@ -237,9 +450,11 @@ till om ni vill ha dem inlagda ändå.
   gäller RT-familjen — okänt om det beror på nyare firmware, en generellt
   omodern doc-lista, eller att just den här enheten har en CT/mätare
   inkopplad som gör skillnaden. En annan SG12RT kan bete sig annorlunda.
-- De skrivbara registren är läst ur samma officiella dokument som
-  läs-registren, men är **inte** wired in i `models.py` som skrivbara
-  ännu — lämnas avsiktligt utkommenterade tills bekräftat mot hårdvara.
+- De skrivbara registren är wired in (`SungrowSGControl`) och adress/
+  enum/skala är dubbelbekräftade mot både V1.1.37 och V1.1.80, men **ingen
+  skrivning har körts mot en riktig inverter ännu** — bara läsning av de
+  aktuella värdena. Fel värde på `start_stop`/`power_limitation_*` kan
+  koppla bort invertern från nätet eller stoppa produktionen.
 - ~~Vilket dataformat `modbus_connection`s `gauge()`/`uint32()`-hjälpare
   faktiskt förväntar sig~~ — bekräftat: paketet är installerat (Python
   3.13, `pip install "modbus-connection[tmodbus]"`) och adresserna i

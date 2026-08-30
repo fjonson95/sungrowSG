@@ -28,7 +28,7 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -46,6 +46,7 @@ from .const import (
     get_toggle,
 )
 from .coordinator import SungrowSGCoordinator
+from .entity import build_device_info
 from .sungrow_modbus.const import OUTPUT_TYPE_LABELS, WORK_STATE_1_LABELS
 
 SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
@@ -264,6 +265,23 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # Cross-checked against iSolarCloud (Sungrow's cloud UI) 2026-08-30:
+    # "Daily operating time" / "Yield this month" matched these exactly.
+    SensorEntityDescription(
+        key="daily_running_time",
+        translation_key="daily_running_time",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="monthly_power_yield",
+        translation_key="monthly_power_yield",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
     # --- Grid meter (external CT/smart meter) -----------------------------------
     SensorEntityDescription(
         key="meter_power",
@@ -368,6 +386,20 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         options=sorted({*OUTPUT_TYPE_LABELS.values(), "unknown"}),
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # Not ENUM: FAULT_CODE_LABELS (Appendix 4) has ~30 distinct names
+    # across hundreds of codes, and both fields are None whenever no
+    # fault/alarm is recorded - a plain text/diagnostic sensor fits better
+    # than forcing a fixed options list.
+    SensorEntityDescription(
+        key="fault_alarm_label",
+        translation_key="fault_alarm_label",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="fault_alarm_time",
+        translation_key="fault_alarm_time",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     SensorEntityDescription(
         key="nominal_active_power",
         translation_key="nominal_active_power",
@@ -390,6 +422,22 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         translation_key="array_insulation_resistance",
         native_unit_of_measurement="kΩ",
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # --- Newly documented in protocol doc V1.1.80 (2026-03-27) ------------------
+    SensorEntityDescription(
+        key="protocol_no",
+        translation_key="protocol_no",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="arm_software_version",
+        translation_key="arm_software_version",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="dsp_software_version",
+        translation_key="dsp_software_version",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
@@ -440,17 +488,7 @@ class SungrowSGSensor(CoordinatorEntity[SungrowSGCoordinator], SensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
-            manufacturer="Sungrow",
-            # Populated from the inverter's own identification registers -
-            # coordinator.data is already filled by the time this platform
-            # is set up (async_setup_entry awaits the first refresh first).
-            model=coordinator.data.get("model_name"),
-            sw_version=coordinator.data.get("protocol_version"),
-            serial_number=coordinator.data.get("serial_number"),
-        )
+        self._attr_device_info = build_device_info(entry, coordinator.data)
 
     @property
     def native_value(self):

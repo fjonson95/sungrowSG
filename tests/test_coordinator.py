@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from modbus_connection import ModbusTimeoutError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -15,6 +17,7 @@ from custom_components.sungrow_sg.const import (
     DOMAIN,
 )
 from custom_components.sungrow_sg.coordinator import SungrowSGCoordinator
+from custom_components.sungrow_sg.sungrow_modbus import registers as reg
 
 from .conftest import EXPECTED_READINGS, FakeModbusConnectionFactory
 
@@ -78,6 +81,32 @@ async def test_shutdown_closes_the_connection(
     await coordinator.async_shutdown()
 
     assert populated_mock_connection.connected is False
+
+
+async def test_fault_alarm_decodes_when_a_fault_is_recorded(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """The default fixture data has no fault recorded (fault_alarm_label is
+    None) - this checks the actual decode path when one is, end to end
+    through the coordinator (not just the library, see test_models.py).
+    """
+    unit = populated_mock_connection.for_unit(1)
+    unit.input[reg.FAULT_ALARM_YEAR.address] = 2026
+    unit.input[reg.FAULT_ALARM_MONTH.address] = 8
+    unit.input[reg.FAULT_ALARM_DAY.address] = 30
+    unit.input[reg.FAULT_ALARM_HOUR.address] = 14
+    unit.input[reg.FAULT_ALARM_MINUTE.address] = 5
+    unit.input[reg.FAULT_ALARM_SECOND.address] = 9
+    unit.input[reg.FAULT_ALARM_CODE.address] = 8  # Grid Overfrequency
+
+    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
+    entry.add_to_hass(hass)
+    coordinator = SungrowSGCoordinator(hass, entry)
+
+    data = await coordinator._async_update_data()
+
+    assert data["fault_alarm_time"] == "2026-08-30 14:05:09"
+    assert data["fault_alarm_label"] == "Grid Overfrequency"
 
 
 async def test_meter_excluded_by_default(
@@ -157,3 +186,133 @@ async def test_strings_without_mppt_still_reads_mppt_voltage_for_string_power(
     assert data["mppt_1_current"] is None  # MPPT sensors themselves off
     assert data["string_1_current"] == EXPECTED_READINGS["string_1_current"]
     assert data["string_1_power"] == EXPECTED_READINGS["string_1_power"]
+
+
+# --- Writable controls (holding registers) --------------------------------------
+
+
+async def _setup_coordinator(hass: HomeAssistant) -> SungrowSGCoordinator:
+    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
+    entry.add_to_hass(hass)
+    coordinator = SungrowSGCoordinator(hass, entry)
+    await coordinator.async_refresh()
+    return coordinator
+
+
+async def test_async_set_start_stop_writes_the_right_raw_value(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    coordinator = await _setup_coordinator(hass)
+    events = []
+    populated_mock_connection.for_unit(1).on_write(events.append)
+
+    await coordinator.async_set_start_stop(running=False)
+
+    assert events[-1].values == [0xCE]
+    assert coordinator.data["start_stop_is_running"] is False
+
+
+async def test_async_set_power_limitation_enabled_writes_the_right_raw_value(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    coordinator = await _setup_coordinator(hass)
+    events = []
+    populated_mock_connection.for_unit(1).on_write(events.append)
+
+    await coordinator.async_set_power_limitation_enabled(enabled=True)
+
+    assert events[-1].values == [0xAA]
+    assert coordinator.data["power_limitation_enabled"] is True
+
+
+async def test_async_set_power_limitation_setting_scales_correctly(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    coordinator = await _setup_coordinator(hass)
+    events = []
+    populated_mock_connection.for_unit(1).on_write(events.append)
+
+    await coordinator.async_set_power_limitation_setting(75.5)
+
+    assert events[-1].values == [755]
+    assert coordinator.data["power_limitation_setting"] == 75.5
+
+
+async def test_async_set_night_svg_enabled_writes_the_right_raw_value(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    coordinator = await _setup_coordinator(hass)
+    events = []
+    populated_mock_connection.for_unit(1).on_write(events.append)
+
+    await coordinator.async_set_night_svg_enabled(enabled=True)
+
+    assert events[-1].values == [0xAA]
+    assert coordinator.data["night_svg_enabled"] is True
+
+
+async def test_async_set_power_limitation_adjustment_scales_correctly(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    coordinator = await _setup_coordinator(hass)
+    events = []
+    populated_mock_connection.for_unit(1).on_write(events.append)
+
+    await coordinator.async_set_power_limitation_adjustment(8.4)
+
+    assert events[-1].values == [84]
+    assert coordinator.data["power_limitation_adjustment"] == 8.4
+
+
+async def test_async_set_feed_in_power_limit_enabled_writes_the_right_raw_value(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    coordinator = await _setup_coordinator(hass)
+    events = []
+    populated_mock_connection.for_unit(1).on_write(events.append)
+
+    await coordinator.async_set_feed_in_power_limit_enabled(enabled=True)
+
+    assert events[-1].values == [0xAA]
+    assert coordinator.data["feed_in_power_limit_enabled"] is True
+
+
+async def test_async_set_feed_in_power_limit_value_scales_correctly(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    coordinator = await _setup_coordinator(hass)
+    events = []
+    populated_mock_connection.for_unit(1).on_write(events.append)
+
+    await coordinator.async_set_feed_in_power_limit_value(12.0)
+
+    assert events[-1].values == [1200]
+    assert coordinator.data["feed_in_power_limit_value"] == 12.0
+
+
+async def test_async_set_feed_in_power_limit_ratio_scales_correctly(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    coordinator = await _setup_coordinator(hass)
+    events = []
+    populated_mock_connection.for_unit(1).on_write(events.append)
+
+    await coordinator.async_set_feed_in_power_limit_ratio(75.5)
+
+    assert events[-1].values == [755]
+    assert coordinator.data["feed_in_power_limit_ratio"] == 75.5
+
+
+async def test_write_failure_raises_home_assistant_error(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """A failed write must surface as HomeAssistantError (so the frontend
+    shows a real error), not an unhandled ModbusError.
+    """
+    coordinator = await _setup_coordinator(hass)
+    populated_mock_connection.for_unit(1).fail_write(
+        reg.START_STOP.address, ModbusTimeoutError("simulated timeout")
+    )
+
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_set_start_stop(running=False)

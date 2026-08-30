@@ -1,35 +1,42 @@
 """Register catalog for Sungrow SG-series inverters (SG5.0RT-SG12RT family).
 
-STATUS: verified against Sungrow's official "Communication Protocol of PV
-Grid-Connected String Inverters" (V1.1.37 EN), AND spot-checked live
-against a real SG12RT over Modbus TCP (2026-08-30): serial_number,
-device_type_code (0x2434), phase voltages, daily/total power yield and
-total active power all read back plausible values matching the inverter's
-own label / display. Not every field in this file has been individually
-read off the real device yet - only the ones wired into models.py so far
-(see docs/register_map.md for what's still outstanding, e.g. the
-holding/write registers).
+STATUS: verified against Sungrow's official "Communication Protocol of
+Residential & Commercial PV Grid-Connected Inverters" (V1.1.80,
+2026-03-27) - a newer, unified doc superseding the SG-string-only V1.1.37
+doc originally used, covering all Sungrow families via a shared Appendix
+1. AND spot-checked live against a real SG12RT over Modbus TCP
+(2026-08-30): serial_number, device_type_code (0x2434), phase voltages,
+daily/total power yield and total active power all read back plausible
+values matching the inverter's own label / display. Not every field in
+this file has been individually read off the real device yet - only the
+ones wired into models.py so far (see docs/register_map.md for what's
+still outstanding, e.g. the holding/write registers).
 
 IMPORTANT - word order on 32-bit (U32/S32) fields:
-    The doc doesn't state byte/word order for multi-register values.
-    Confirmed live: this inverter (over Modbus TCP) puts the LOW word at
-    the first (lower) address and the HIGH word at the second - the
-    opposite of the common "big-endian" convention. Decoding
-    total_active_power and total_power_yield with word order "big" (the
-    modbus_connection default) produced ~99 MW and ~360 GWh on a 12kW
-    inverter; switching to "little" gave correct values. Every count=2
-    (U32/S32) field's consumer must pass word_order="little" - see
+    Originally discovered empirically (see below), and since independently
+    CONFIRMED in the V1.1.80 doc text itself (section 1.1 Abbreviations):
+    "U32: 32-bit unsigned integer; little-endian for double-word data.
+    Big-endian for byte data." i.e. the LOW word goes at the first (lower)
+    address and the HIGH word at the second - opposite of the common
+    "big-endian" convention and of modbus_connection's own default. Every
+    count=2 (U32/S32) field's consumer must pass word_order="little" - see
     models.py.
 
-    Only address (see below) and this word-order gotcha have been
-    hardware-confirmed - everything else here still traces back to the
-    PDF/community cross-reference, not a live read.
+    How this was first found: decoding total_active_power and
+    total_power_yield with word order "big" (the modbus_connection
+    default) produced ~99 MW and ~360 GWh on a 12kW inverter; switching to
+    "little" gave correct values, live against a real SG12RT
+    (2026-08-30) - before the V1.1.80 doc text above was found and
+    confirmed it as documented behaviour, not inverter-specific quirk.
 
-Source: bohdan-s/Sungrow-Inverter mirrors the official PDF at
+Source: bohdan-s/Sungrow-Inverter mirrors the original SG-string-only PDF
+at
 https://github.com/bohdan-s/Sungrow-Inverter/blob/main/Modbus%20Information/Communication%20Protocol%20of%20PV%20Grid-Connected%20String%20Inverters_V1.1.37_EN.pdf
 Every field/address/datatype/scale/unit below was read directly from that
 document's register tables (section 3.1 "Running information", section
-"a) Parameter setting") and Appendix 6 (device type codes).
+"a) Parameter setting") and Appendix 6 (device type codes), and
+cross-checked against the newer V1.1.80 doc's section 2.1 "Running
+Information Variable" / 2.2 "Parameter Setting Definition" / Appendix 1.
 
 IMPORTANT - the address offset gotcha:
     The document's own table lists addresses as 1-based "reference
@@ -89,22 +96,59 @@ class RegisterSpec:
 
 # --- Identification ---------------------------------------------------------
 # PROTOCOL_VERSION: marked "Reserved" for doc address 4952-4953 in the
-# official SG-string-inverter PDF this file is otherwise built on (see
-# module docstring) - that specific field comes from other Sungrow
-# documentation (the SH-hybrid protocol doc documents the same address
-# as "protocol_version", format 0x01015300 = V1.1.53
-# Major.Minor.Patch.Build; "Logger forwarding not supported" per that
-# source, i.e. some data-logger/gateway setups don't relay it). Live
-# tested 2026-08-30 on this SG12RT with word_order="little" (same
-# convention as every other count=2 field here): decoded to a plausible
-# 0x01011900 = V1.1.25, one point below the V1.1.37 PDF this file is
-# built on - consistent with an inverter running slightly older
-# firmware than the latest protocol doc.
+# original SG-string-inverter PDF (V1.1.37) this file was originally built
+# on (see module docstring). That was a gap in that specific doc, not the
+# hardware - the newer V1.1.80 doc officially documents this exact address
+# as "Protocol version" (Table 3, "2. Protocol version 4952 - 4953 U32"),
+# confirming what had only been inferred before from the unrelated
+# SH-hybrid protocol doc (format 0x01015300 = V1.1.53
+# Major.Minor.Patch.Build). Live tested 2026-08-30 on this SG12RT with
+# word_order="little" (same convention as every other count=2 field
+# here): decoded to a plausible 0x01011900 = V1.1.25, one point below the
+# V1.1.37 PDF originally used - consistent with an inverter running
+# slightly older firmware than that protocol doc.
 PROTOCOL_VERSION = RegisterSpec(
     address=4951,
     function="input",
     manufacturer_ref="4952-4953",
     count=2,
+    verified=True,
+    cross_referenced=True,
+)
+# PROTOCOL_NO: doc address 4950-4951, immediately before PROTOCOL_VERSION.
+# V1.1.80 Table 3 lists it as "1. Protocol No." U32 with no further
+# description of what distinguishes it from "Protocol version" - modeled
+# here as a raw uint32 (see models.py protocol_no) since its meaning
+# beyond the register table isn't documented. Not yet read against real
+# hardware.
+PROTOCOL_NO = RegisterSpec(
+    address=4949,
+    function="input",
+    manufacturer_ref="4950-4951",
+    count=2,
+    verified=True,
+)
+# ARM_SOFTWARE_VERSION / DSP_SOFTWARE_VERSION: newly found in V1.1.80
+# Table 3 ("3. ARM software version 4954 - 4968 UTF-8", "4. DSP software
+# version 4969 - 4983 UTF-8") - this whole span (4950-4989) was previously
+# an undocumented "Reserved" block in V1.1.37 that empirically contained
+# readable ASCII firmware tags (e.g. "...LCD_BERYL-S_V11_V01_A",
+# "...DSP_BERYL-S_V11_V01_A", found live 2026-08-30) with field
+# boundaries that were pure guesses at the time. V1.1.80 confirms the
+# real field boundaries: 15 registers each. Doc address 4984-4989 (6
+# registers) remains genuinely "Reserved" per the doc - no field for it.
+ARM_SOFTWARE_VERSION = RegisterSpec(
+    address=4953,
+    function="input",
+    manufacturer_ref="4954-4968",
+    count=15,
+    verified=True,
+)
+DSP_SOFTWARE_VERSION = RegisterSpec(
+    address=4968,
+    function="input",
+    manufacturer_ref="4969-4983",
+    count=15,
     verified=True,
 )
 SERIAL_NUMBER = RegisterSpec(
@@ -258,13 +302,49 @@ TOTAL_REACTIVE_POWER = RegisterSpec(
 POWER_FACTOR = RegisterSpec(
     address=5034, function="input", manufacturer_ref="5035", scale=0.001, verified=True, cross_referenced=True
 )
+# V1.1.80 documents TWO grid frequency registers with the same value at
+# different resolutions: doc 5036 (0.1Hz) and doc 5148 (0.01Hz) - "Compared
+# with 'Grid frequency' 5148, only the resolution is different." This uses
+# the precise one (5148, next to negative_voltage_to_ground/bus_voltage in
+# the register map) since iSolarCloud's own UI displays 2 decimals (e.g.
+# 49.99 Hz - confirmed against this SG12RT 2026-08-30); the coarser 5036
+# would round that to 50.0.
 GRID_FREQUENCY = RegisterSpec(
-    address=5035, function="input", manufacturer_ref="5036", scale=0.1, unit="Hz", verified=True, cross_referenced=True
+    address=5147, function="input", manufacturer_ref="5148", scale=0.01, unit="Hz", verified=True, cross_referenced=True
 )
 
 # --- Work state / diagnostics ------------------------------------------------
 WORK_STATE_1 = RegisterSpec(
     address=5037, function="input", manufacturer_ref="5038", verified=True, cross_referenced=True
+)
+# Fault/alarm timestamp + code (doc 5039-5045) - "valid only when the
+# device work state is fault (0x5500) or alarm (0x9100)" per the doc, i.e.
+# stale/meaningless whenever WORK_STATE_1 isn't one of those two values.
+# FAULT_ALARM_CODE looks up const.py FAULT_CODE_LABELS (Appendix 4,
+# "Device Fault Code", Table 12) via models.py's fault_alarm_label
+# property - it's a many-values-to-one-name mapping (e.g. "2, 3, 14, 15"
+# all mean "Grid Overvoltage"), not a dense enum, so codes not in the
+# table decode to "unknown" rather than raising.
+FAULT_ALARM_YEAR = RegisterSpec(
+    address=5038, function="input", manufacturer_ref="5039", verified=True
+)
+FAULT_ALARM_MONTH = RegisterSpec(
+    address=5039, function="input", manufacturer_ref="5040", verified=True
+)
+FAULT_ALARM_DAY = RegisterSpec(
+    address=5040, function="input", manufacturer_ref="5041", verified=True
+)
+FAULT_ALARM_HOUR = RegisterSpec(
+    address=5041, function="input", manufacturer_ref="5042", verified=True
+)
+FAULT_ALARM_MINUTE = RegisterSpec(
+    address=5042, function="input", manufacturer_ref="5043", verified=True
+)
+FAULT_ALARM_SECOND = RegisterSpec(
+    address=5043, function="input", manufacturer_ref="5044", verified=True
+)
+FAULT_ALARM_CODE = RegisterSpec(
+    address=5044, function="input", manufacturer_ref="5045", verified=True
 )
 NOMINAL_REACTIVE_POWER = RegisterSpec(
     address=5048,
@@ -282,6 +362,23 @@ ARRAY_INSULATION_RESISTANCE = RegisterSpec(
     unit="kΩ",
     verified=True,
     cross_referenced=True,
+)
+# Cross-checked against iSolarCloud (Sungrow's own cloud UI) 2026-08-30:
+# "Daily operating time"/"Yield this month" match these two exactly.
+# There is no "yearly yield" register in the doc - iSolarCloud's "Yield
+# this year" is a cloud-side aggregate, not something readable over
+# Modbus.
+DAILY_RUNNING_TIME = RegisterSpec(
+    address=5112, function="input", manufacturer_ref="5113", unit="min", verified=True
+)
+MONTHLY_POWER_YIELD = RegisterSpec(
+    address=5127,
+    function="input",
+    manufacturer_ref="5128-5129",
+    count=2,
+    scale=0.1,
+    unit="kWh",
+    verified=True,
 )
 WORK_STATE_2 = RegisterSpec(
     address=5080,
@@ -391,13 +488,14 @@ TOTAL_DIRECT_ENERGY_CONSUMPTION = RegisterSpec(
 # --- Control (writable, holding registers) ------------------------------------
 # Address/scale/unit read directly from the official doc's "a) Parameter
 # setting address definition (holding register, Address type: 4X)" table
-# - same -1 offset rule applies to holding registers (see module
-# docstring: example (d) reads doc address 5000 by sending wire 0x1387 =
-# 4999 with function code 0x03).
+# (V1.1.37) resp. chapter 3 "Power Regulation Parameters" (V1.1.80) - same
+# -1 offset rule applies to holding registers (see module docstring:
+# example (d) reads doc address 5000 by sending wire 0x1387 = 4999 with
+# function code 0x03).
 #
-# Still do NOT wire these into models.py as writable until confirmed on
-# real hardware - a wrong register/value here can disconnect the inverter
-# from the grid. See docs/register_map.md.
+# Wired into SungrowSGControl in models.py, read-verified live against a
+# real SG12RT - see docs/register_map.md for what has/hasn't had an
+# actual write sent to real hardware.
 START_STOP = RegisterSpec(
     address=5005,
     function="holding",
@@ -428,6 +526,51 @@ NIGHT_SVG_SWITCH = RegisterSpec(
     address=5034,
     function="holding",
     manufacturer_ref="5035",
+    writable=True,
+    verified=True,
+)
+# Absolute-value alternative to POWER_LIMITATION_SETTING's percentage
+# (doc chapter 3.1.3 "Setting Power Limitation Value"): still requires
+# POWER_LIMITATION_SWITCH enabled first, same as the percentage method
+# (chapter 3.1.2). Target value directly in kW instead of a % of rated
+# power.
+POWER_LIMITATION_ADJUSTMENT = RegisterSpec(
+    address=5038,
+    function="holding",
+    manufacturer_ref="5039",
+    scale=0.1,
+    unit="kW",
+    writable=True,
+    verified=True,
+)
+# Feed-in power limit family (doc chapter 3.1, "Feed-in power limit"
+# rows in Table 5) - a SEPARATE control point from POWER_LIMITATION_*
+# above: it restricts power at the grid connection point (needs an
+# external smart meter wired in for feed-in limitation), not at the
+# inverter's own AC output. Explicitly listed as valid for the
+# SG3.0-25RT family, which SG12RT belongs to.
+FEED_IN_POWER_LIMIT_SWITCH = RegisterSpec(
+    address=5009,
+    function="holding",
+    manufacturer_ref="5010",
+    writable=True,
+    verified=True,
+)
+FEED_IN_POWER_LIMIT_VALUE = RegisterSpec(
+    address=5010,
+    function="holding",
+    manufacturer_ref="5011",
+    scale=0.01,
+    unit="kW",
+    writable=True,
+    verified=True,
+)
+FEED_IN_POWER_LIMIT_RATIO = RegisterSpec(
+    address=5014,
+    function="holding",
+    manufacturer_ref="5015",
+    scale=0.1,
+    unit="%",
     writable=True,
     verified=True,
 )

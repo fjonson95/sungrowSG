@@ -6,6 +6,6 @@ Assistant; a `modbus_connection.ModbusUnit` is injected by the caller
 (either the HA integration in this repo, or a standalone script).
 """
 
-from .models import SungrowSGInverter
+from .models import SungrowSGControl, SungrowSGInverter
 
-__all__ = ["SungrowSGInverter"]
+__all__ = ["SungrowSGControl", "SungrowSGInverter"]
