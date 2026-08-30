@@ -11,8 +11,11 @@ Projektet är uppdelat i två delar, enligt mönstret `trovis-modbus` (bibliotek
 - **`library/sungrow-modbus/`** — fristående, HA-oberoende Python-paket som
   modellerar Sungrow SG-enheter mot `modbus_connection.model`
   (register, skalning, enheter, coils). Publiceras separat på PyPI när det är
-  moget, testas med `modbus_connection`s pytest-plugin mot riktiga
-  in-process Modbus-servrar (ingen mockning).
+  moget, testas med `modbus_connection`s pytest-plugin (`mock_modbus_unit` -
+  ett in-memory testdubbel, inte en riktig socket-server) för att fånga
+  fel i register-ihopkopplingen (fel adressrymd, fel adress, fel skala)
+  utan att behöva riktig hårdvara. Ersätter inte ett test mot en riktig
+  inverter.
 - **`custom_components/sungrow_sg/`** — HACS-distribuerad Home Assistant-
   integration som "vendorar" biblioteket, ber kärnintegrationen `modbus` om
   en unit (delad, serialiserad anslutning — ingen egen socket), och
@@ -20,15 +23,50 @@ Projektet är uppdelat i två delar, enligt mönstret `trovis-modbus` (bibliotek
 
 ## Status
 
-Tidigt skelett. Registerkartan för SG12RT (`docs/register_map.md`) är
-**inte verifierad** — den är ihopsatt av kända Sungrow-register från
-community-projekt (t.ex. `mkaiser/Sungrow-SHx-Inverter-Modbus-Home-Assistant`)
-och måste stämmas av mot Sungrows officiella Modbus-protokolldokument för
-SG5.0RT–SG12RT-familjen innan något litas på i produktion.
+Registerkartan för SG12RT (`docs/register_map.md`,
+`library/sungrow-modbus/src/sungrow_modbus/registers.py`) är **läst direkt
+ur Sungrows officiella protokolldokument** ("Communication Protocol of PV
+Grid-Connected String Inverters" V1.1.37 EN) — adress, datatyp, skala och
+enhet per fält, inklusive en adress-offset-fälla i dokumentet (tabellens
+nummer är 1-baserade, wire-adressen är −1) som är löst och dokumenterad.
 
-`modbus-connection` kräver Python ≥3.12. Denna dev-miljö har bara 3.10
-installerat lokalt — sätt upp en 3.12-venv (eller kör i HA:s devcontainer)
-innan biblioteket faktiskt installeras och testas skarpt.
+`library/sungrow-modbus` är installerat och testat på riktigt i den här
+miljön (Python 3.13, `pip install "modbus-connection[tmodbus]"` —
+paketet finns på PyPI och kräver bara Python ≥3.12, tvärtemot ett
+tidigare antagande här att bara 3.10 fanns tillgängligt). Det avslöjade
+en riktig bugg: `Component.register_space` är `"holding"` som default,
+men hela Sungrow-registerkartan ligger i input-registerrymden — utan
+`register_space = "input"` i `models.py` (nu fixat) hade varje läsning
+mot en riktig inverter träffat fel registerfil. `pytest` går grönt mot
+paketets in-memory mock, se `library/sungrow-modbus/tests/`.
+
+**Testad live mot en riktig SG12RT** (`scripts/query.py`) — hittade och
+löste en till bugg: `uint32()`-fälten (`total_active_power`,
+`total_power_yield` m.fl.) behöver `word_order="little"`, inte
+bibliotekets default `"big"` (gav annars ~99 MW respektive ~360 GWh på
+en 12kW-inverter). Efter fixen: rimliga värden rakt av.
+
+**Alla PDF-verifierade läsregister är nu wired in i `SungrowSGInverter`**
+och livetestade: identitet/firmware, alla AC/DC-mätvärden, temperatur,
+MPPT 1/2, per-sträng-ström, hela elmätarblocket (export/import/last),
+work state, isolationsresistans m.fl. — se `docs/register_map.md` för
+fullständig lista och `scripts/query.py` för att köra det själv. De
+skrivbara holding-registren (start/stopp, effektbegränsning, Night SVG)
+är fortfarande medvetet lämnade utanför — se "Att göra" i
+`docs/register_map.md`.
+
+**`custom_components/sungrow_sg/coordinator.py` + `sensor.py` är nu
+kopplade mot alla dessa fält** — 42 sensorer (identitet går till
+`DeviceInfo.model`/`sw_version`/`serial_number` istället för egna
+entiteter). `coordinator.py` bygger en riktig `ModbusConnection` +
+`SungrowSGInverter` (inte längre en `self._inverter = None`-stub) och
+stänger den vid unload. Varje `SensorEntityDescription` (device_class,
+enhet, state_class, `options` för de två ENUM-sensorerna) är validerad
+mot en riktig installerad Home Assistant-core (2024.3.3) genom att
+faktiskt konstruera varje sensor och läsa `.state` — noll fel, noll
+varningar. Detta är **inte** samma sak som ett test mot en körande HA
+med den här integrationen laddad (ingen riktig `ConfigEntry`/`hass`
+användes) — se "Att göra" nedan.
 
 ## Varför en egen integration (i korthet)
 
@@ -39,10 +77,31 @@ att bidra tillbaka till communityn om SG12RT-stödet blir bra.
 
 ## Nästa steg
 
-1. Hämta/verifiera SG12RT-registerkartan mot Sungrows officiella dokument.
-2. Fylla i `library/sungrow-modbus/src/sungrow_modbus/registers.py` med
-   verifierade adresser.
-3. Sätta upp Python 3.12-miljö och installera `modbus-connection` på riktigt.
-4. Skriva tester i `library/sungrow-modbus/tests/`.
-5. Bygga config_flow + coordinator + sensor-platform i
-   `custom_components/sungrow_sg/` och testa mot en riktig SG12RT på LAN.
+1. ~~Läsa igenom Sungrows officiella protokolldokument register-för-register~~
+   — klart, se `docs/register_map.md`.
+2. ~~Sätta upp Python 3.12+-miljö och installera `modbus-connection`~~ —
+   klart (3.13, se `library/sungrow-modbus/pyproject.toml`).
+3. ~~Skriva tester i `library/sungrow-modbus/tests/`~~ — klart mot
+   in-memory mock.
+4. ~~Köra `scripts/query.py` mot en riktig SG12RT~~ — klart, se ovan.
+5. ~~Koppla in resten av de PDF-verifierade läsfälten i `models.py`~~ —
+   klart och livetestat, se `docs/register_map.md`.
+6. ~~Koppla `coordinator.py`/`sensor.py` mot alla fält i `models.py`~~ —
+   klart (42 sensorer), se ovan. Statiskt validerat mot en riktig
+   Home Assistant-core, men **inte** kört mot en riktig, laddad HA-instans
+   än — `config_flow.py`s `_async_try_connect` är fortfarande en no-op
+   (kopplar aldrig faktiskt upp mot invertern under själva config flow-
+   steget, bara vid första coordinator-refresh efteråt), och ingen har
+   provat att lägga till integrationen i en riktig HA och se att
+   entiteterna faktiskt dyker upp korrekt.
+7. De skrivbara holding-registren (start/stopp, effektbegränsning,
+   Night SVG) är avsiktligt inte wired in som skrivbara än — kräver en
+   egen `Component` (annan `register_space`) och försiktig
+   hårdvarutestning, se "Att göra" punkt 5 i `docs/register_map.md`.
+8. `custom_components/sungrow_sg/manifest.json` pekar på
+   `sungrow-modbus==0.0.1` som ett PyPI-krav, men paketet är bara lokalt
+   (inte publicerat) — HA:s riktiga requirements-installation skulle
+   faila på det. Måste lösas (publicera på PyPI, eller peka på en git-URL,
+   eller vendora biblioteket) innan integrationen kan installeras i en
+   riktig HA utan att manuellt ha `sungrow-modbus`/`modbus-connection`
+   redan installerat i samma Python-miljö.
