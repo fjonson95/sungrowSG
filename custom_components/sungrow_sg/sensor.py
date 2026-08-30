@@ -32,7 +32,19 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import (
+    CONF_INCLUDE_METER,
+    CONF_INCLUDE_MPPT,
+    CONF_INCLUDE_STRINGS,
+    DEFAULT_INCLUDE_METER,
+    DEFAULT_INCLUDE_MPPT,
+    DEFAULT_INCLUDE_STRINGS,
+    DOMAIN,
+    METER_SENSOR_KEYS,
+    MPPT_SENSOR_KEYS,
+    STRING_SENSOR_KEYS,
+    get_toggle,
+)
 from .coordinator import SungrowSGCoordinator
 from .sungrow_modbus.const import OUTPUT_TYPE_LABELS, WORK_STATE_1_LABELS
 
@@ -129,6 +141,15 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    # Calculated (mppt_1_voltage * mppt_1_current) - no direct register,
+    # see sungrow_modbus models.py mppt_1_power docstring.
+    SensorEntityDescription(
+        key="mppt_1_power",
+        translation_key="mppt_1_power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
     SensorEntityDescription(
         key="mppt_2_voltage",
         translation_key="mppt_2_voltage",
@@ -141,6 +162,14 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         translation_key="mppt_2_current",
         device_class=SensorDeviceClass.CURRENT,
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    # Calculated (mppt_2_voltage * mppt_2_current) - no direct register.
+    SensorEntityDescription(
+        key="mppt_2_power",
+        translation_key="mppt_2_power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
@@ -166,12 +195,22 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    # --- Per-string current ------------------------------------------------------
+    # --- Per-string current + calculated power ------------------------------------
+    # Power is calculated (string_N_current * the MPPT it's wired to's
+    # voltage - strings don't have their own voltage register), see
+    # sungrow_modbus models.py string_N_power docstrings.
     SensorEntityDescription(
         key="string_1_current",
         translation_key="string_1_current",
         device_class=SensorDeviceClass.CURRENT,
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="string_1_power",
+        translation_key="string_1_power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
@@ -182,10 +221,24 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
+        key="string_2_power",
+        translation_key="string_2_power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
         key="string_3_current",
         translation_key="string_3_current",
         device_class=SensorDeviceClass.CURRENT,
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="string_3_power",
+        translation_key="string_3_power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     # --- Energy yield -----------------------------------------------------------
@@ -342,13 +395,36 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
 )
 
 
+def _enabled_descriptions(
+    entry: ConfigEntry,
+) -> tuple[SensorEntityDescription, ...]:
+    """SENSOR_DESCRIPTIONS filtered by the entry's include_strings/mppt/meter
+    toggles - a key not in any of the three optional-group sets is always
+    included (the core fields, plus energy yield/status/identity).
+    """
+    include_mppt = get_toggle(entry, CONF_INCLUDE_MPPT, DEFAULT_INCLUDE_MPPT)
+    include_strings = get_toggle(entry, CONF_INCLUDE_STRINGS, DEFAULT_INCLUDE_STRINGS)
+    include_meter = get_toggle(entry, CONF_INCLUDE_METER, DEFAULT_INCLUDE_METER)
+
+    def keep(key: str) -> bool:
+        if key in MPPT_SENSOR_KEYS:
+            return include_mppt
+        if key in STRING_SENSOR_KEYS:
+            return include_strings
+        if key in METER_SENSOR_KEYS:
+            return include_meter
+        return True
+
+    return tuple(d for d in SENSOR_DESCRIPTIONS if keep(d.key))
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: SungrowSGCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
         SungrowSGSensor(coordinator, entry, description)
-        for description in SENSOR_DESCRIPTIONS
+        for description in _enabled_descriptions(entry)
     )
 
 

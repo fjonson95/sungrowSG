@@ -8,16 +8,38 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.sungrow_sg.const import CONF_UNIT_ID, DOMAIN
+from custom_components.sungrow_sg.const import (
+    CONF_INCLUDE_METER,
+    CONF_INCLUDE_MPPT,
+    CONF_INCLUDE_STRINGS,
+    CONF_UNIT_ID,
+    DOMAIN,
+    METER_SENSOR_KEYS,
+    MPPT_SENSOR_KEYS,
+    STRING_SENSOR_KEYS,
+)
 from custom_components.sungrow_sg.sensor import SENSOR_DESCRIPTIONS
 
 from .conftest import EXPECTED_READINGS, FakeModbusConnectionFactory
 
-ENTRY_DATA = {"host": "10.1.6.206", "port": 502, CONF_UNIT_ID: 1}
+# include_meter=True here (its own default is False) so this file's main
+# test can assert against every entry in SENSOR_DESCRIPTIONS, meter
+# sensors included. test_sensor_groups_can_be_excluded below covers the
+# toggles themselves.
+ENTRY_DATA = {
+    "host": "10.1.6.206",
+    "port": 502,
+    CONF_UNIT_ID: 1,
+    CONF_INCLUDE_STRINGS: True,
+    CONF_INCLUDE_MPPT: True,
+    CONF_INCLUDE_METER: True,
+}
 
 
-async def _setup_entry(hass: HomeAssistant) -> MockConfigEntry:
-    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
+async def _setup_entry(
+    hass: HomeAssistant, data: dict | None = None
+) -> MockConfigEntry:
+    entry = MockConfigEntry(domain=DOMAIN, data=data or ENTRY_DATA)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -36,7 +58,7 @@ async def test_all_descriptions_create_an_entity_with_the_right_state(
     entry = await _setup_entry(hass)
     entity_registry = er.async_get(hass)
 
-    assert len(SENSOR_DESCRIPTIONS) == 42
+    assert len(SENSOR_DESCRIPTIONS) == 47
 
     for description in SENSOR_DESCRIPTIONS:
         unique_id = f"{entry.entry_id}_{description.key}"
@@ -121,6 +143,79 @@ async def test_diagnostic_entities_are_categorized(
             entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
         )
         assert entry_reg.entity_category == "diagnostic"
+
+
+async def test_sensor_groups_can_be_excluded(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """Turning a group off in config_flow means no entity for it at all -
+    not just a hidden/unavailable one.
+    """
+    entry = await _setup_entry(
+        hass,
+        data={
+            "host": "10.1.6.206",
+            "port": 502,
+            CONF_UNIT_ID: 1,
+            CONF_INCLUDE_STRINGS: False,
+            CONF_INCLUDE_MPPT: False,
+            CONF_INCLUDE_METER: False,
+        },
+    )
+    entity_registry = er.async_get(hass)
+
+    excluded_keys = MPPT_SENSOR_KEYS | STRING_SENSOR_KEYS | METER_SENSOR_KEYS
+    for key in excluded_keys:
+        unique_id = f"{entry.entry_id}_{key}"
+        assert (
+            entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id) is None
+        ), f"{key!r} should not exist with its group excluded"
+
+    # A core sensor is still there.
+    core_unique_id = f"{entry.entry_id}_phase_a_voltage"
+    assert (
+        entity_registry.async_get_entity_id("sensor", DOMAIN, core_unique_id)
+        is not None
+    )
+
+
+async def test_changing_options_reloads_and_updates_sensors(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """The options flow actually takes effect - __init__.py's update
+    listener must reload the entry, since HA doesn't do that on its own
+    (see the comment on it in __init__.py).
+
+    Checks live state, not the entity registry: HA doesn't purge a
+    registry entry just because a reload no longer recreates it. Instead
+    the state machine keeps a "restored" placeholder showing
+    `unavailable` for it - the registry entry (and that placeholder)
+    persisting is normal, expected HA behavior, not a sign the toggle
+    didn't take effect.
+    """
+    entry = await _setup_entry(hass)  # ENTRY_DATA: all three groups on
+    entity_registry = er.async_get(hass)
+    mppt_unique_id = f"{entry.entry_id}_mppt_1_voltage"
+    mppt_entity_id = entity_registry.async_get_entity_id(
+        "sensor", DOMAIN, mppt_unique_id
+    )
+    state = hass.states.get(mppt_entity_id)
+    assert state is not None
+    assert state.state not in ("unavailable", "unknown")
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_INCLUDE_STRINGS: True,
+            CONF_INCLUDE_MPPT: False,
+            CONF_INCLUDE_METER: True,
+        },
+    )
+    await hass.async_block_till_done()
+
+    state = hass.states.get(mppt_entity_id)
+    assert state is None or state.state == "unavailable"
 
 
 async def test_unload_entry_closes_the_connection(

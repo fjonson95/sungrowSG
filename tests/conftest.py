@@ -154,14 +154,19 @@ EXPECTED_READINGS: dict[str, object] = {
     "grid_frequency": 49.9,
     "mppt_1_voltage": 632.1,
     "mppt_1_current": 3.1,
+    "mppt_1_power": 1959.5,  # calculated: mppt_1_voltage * mppt_1_current
     "mppt_2_voltage": 487.5,
     "mppt_2_current": 3.1,
+    "mppt_2_power": 1511.2,  # calculated
     "total_dc_power": 3470,
     "bus_voltage": 677.0,
     "negative_voltage_to_ground": 0.0,
     "string_1_current": 2.98,
+    "string_1_power": 1883.7,  # calculated: mppt_1_voltage * string_1_current
     "string_2_current": 0.0,
+    "string_2_power": 0.0,
     "string_3_current": 3.12,
+    "string_3_power": 1521.0,  # calculated: mppt_2_voltage * string_3_current
     "daily_power_yield": 8.4,
     "total_power_yield": 38258.3,
     "total_running_time": 12228,

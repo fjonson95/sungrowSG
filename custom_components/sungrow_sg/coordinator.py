@@ -20,7 +20,19 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from modbus_connection import ModbusError, ModbusTcpParams
 from modbus_connection.tmodbus import ModbusConnection
 
-from .const import CONF_UNIT_ID, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import (
+    CONF_INCLUDE_METER,
+    CONF_INCLUDE_MPPT,
+    CONF_INCLUDE_STRINGS,
+    CONF_UNIT_ID,
+    DEFAULT_INCLUDE_METER,
+    DEFAULT_INCLUDE_MPPT,
+    DEFAULT_INCLUDE_STRINGS,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    get_toggle,
+    restricted_field_names,
+)
 from .sungrow_modbus import SungrowSGInverter
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +54,21 @@ class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._inverter = SungrowSGInverter(
             self._connection.for_unit(entry.data[CONF_UNIT_ID])
+        )
+        # Only actually poll the registers the enabled sensor groups need -
+        # e.g. a unit with no CT/meter accessory can otherwise read zeros
+        # or garbage on the meter block for no benefit (see
+        # sungrow_modbus registers.py METER_POWER docstring).
+        self._inverter.restrict_fields(
+            restricted_field_names(
+                include_mppt=get_toggle(entry, CONF_INCLUDE_MPPT, DEFAULT_INCLUDE_MPPT),
+                include_strings=get_toggle(
+                    entry, CONF_INCLUDE_STRINGS, DEFAULT_INCLUDE_STRINGS
+                ),
+                include_meter=get_toggle(
+                    entry, CONF_INCLUDE_METER, DEFAULT_INCLUDE_METER
+                ),
+            )
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -72,15 +99,21 @@ class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # DC / MPPT
             "mppt_1_voltage": inverter.mppt_1_voltage,
             "mppt_1_current": inverter.mppt_1_current,
+            "mppt_1_power": inverter.mppt_1_power,
             "mppt_2_voltage": inverter.mppt_2_voltage,
             "mppt_2_current": inverter.mppt_2_current,
+            "mppt_2_power": inverter.mppt_2_power,
             "total_dc_power": inverter.total_dc_power,
             "bus_voltage": inverter.bus_voltage,
             "negative_voltage_to_ground": inverter.negative_voltage_to_ground,
-            # Per-string current
+            # Per-string current + calculated power (no direct register -
+            # see sungrow_modbus models.py string_N_power docstrings)
             "string_1_current": inverter.string_1_current,
+            "string_1_power": inverter.string_1_power,
             "string_2_current": inverter.string_2_current,
+            "string_2_power": inverter.string_2_power,
             "string_3_current": inverter.string_3_current,
+            "string_3_power": inverter.string_3_power,
             # Energy yield
             "daily_power_yield": inverter.daily_power_yield,
             "total_power_yield": inverter.total_power_yield,

@@ -107,6 +107,7 @@ async def test_reads_dc_ac_and_status_fields(mock_modbus_unit):
     assert inverter.nominal_active_power == 12.0
     assert inverter.mppt_1_voltage == 639.6
     assert inverter.mppt_1_current == 3.1
+    assert inverter.mppt_1_power == 1982.8  # 639.6 * 3.1, no direct register
     assert inverter.phase_a_current == 4.8
     assert inverter.total_dc_power == 3554
     assert inverter.total_reactive_power == 5
@@ -115,6 +116,42 @@ async def test_reads_dc_ac_and_status_fields(mock_modbus_unit):
     assert inverter.work_state_1_label == "run"
     assert inverter.work_state_2 == 0x20001
     assert inverter.array_insulation_resistance is None
+
+
+async def test_calculated_string_power_uses_the_right_mppt_voltage(mock_modbus_unit):
+    """string_1/2 share MPPT 1's voltage, string_3 uses MPPT 2's - not a
+    single global voltage (see models.py docstrings on each property).
+    """
+    mock_modbus_unit.input[reg.MPPT_1_VOLTAGE.address] = 6321  # 632.1 V
+    mock_modbus_unit.input[reg.MPPT_2_VOLTAGE.address] = 4875  # 487.5 V
+    mock_modbus_unit.input[reg.STRING_1_CURRENT.address] = 298  # 2.98 A
+    mock_modbus_unit.input[reg.STRING_2_CURRENT.address] = 0
+    mock_modbus_unit.input[reg.STRING_3_CURRENT.address] = 312  # 3.12 A
+
+    inverter = SungrowSGInverter(mock_modbus_unit)
+    await inverter.async_update()
+
+    assert inverter.string_1_power == 1883.7  # 632.1 * 2.98 (MPPT 1)
+    assert inverter.string_2_power == 0.0
+    assert inverter.string_3_power == 1521.0  # 487.5 * 3.12 (MPPT 2)
+
+
+async def test_calculated_power_is_none_without_both_inputs(mock_modbus_unit):
+    """No TypeError from None * None - before the first async_update(),
+    and after restrict_fields() excludes an underlying field.
+    """
+    inverter = SungrowSGInverter(mock_modbus_unit)
+    assert inverter.mppt_1_power is None
+    assert inverter.string_1_power is None
+
+    mock_modbus_unit.input[reg.MPPT_1_VOLTAGE.address] = 6321
+    mock_modbus_unit.input[reg.MPPT_1_CURRENT.address] = 31
+    inverter.restrict_fields(["mppt_1_voltage"])  # mppt_1_current excluded
+    await inverter.async_update()
+
+    assert inverter.mppt_1_voltage == 632.1
+    assert inverter.mppt_1_current is None
+    assert inverter.mppt_1_power is None
 
 
 async def test_work_state_and_output_type_labels_fall_back_to_unknown(mock_modbus_unit):

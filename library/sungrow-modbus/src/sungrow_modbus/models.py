@@ -303,3 +303,46 @@ class SungrowSGInverter(Component):
     def output_type_label(self) -> str:
         """Human-readable output_type - "unknown" if unrecognized."""
         return OUTPUT_TYPE_LABELS.get(int(self.output_type), "unknown")
+
+    # --- Calculated power (no direct register - V * I) ---------------------------
+    # None whenever either input is None: before the first async_update(),
+    # or when restrict_fields() has excluded the underlying voltage/current
+    # (see coordinator.py) - never raise TypeError on None * None.
+    @property
+    def mppt_1_power(self) -> float | None:
+        """mppt_1_voltage * mppt_1_current, in W."""
+        if self.mppt_1_voltage is None or self.mppt_1_current is None:
+            return None
+        return round(self.mppt_1_voltage * self.mppt_1_current, 1)
+
+    @property
+    def mppt_2_power(self) -> float | None:
+        """mppt_2_voltage * mppt_2_current, in W."""
+        if self.mppt_2_voltage is None or self.mppt_2_current is None:
+            return None
+        return round(self.mppt_2_voltage * self.mppt_2_current, 1)
+
+    # Strings don't have their own voltage register - strings on the same
+    # MPPT are wired in parallel and share that MPPT's voltage (see
+    # registers.py STRING_1/2/3_CURRENT docstring). SG12RT: strings 1-2 are
+    # on MPPT 1, string 3 is on MPPT 2 (Appendix 6 "String/MPPT" = "2;1").
+    @property
+    def string_1_power(self) -> float | None:
+        """mppt_1_voltage * string_1_current, in W (string 1 is on MPPT 1)."""
+        if self.mppt_1_voltage is None or self.string_1_current is None:
+            return None
+        return round(self.mppt_1_voltage * self.string_1_current, 1)
+
+    @property
+    def string_2_power(self) -> float | None:
+        """mppt_1_voltage * string_2_current, in W (string 2 is on MPPT 1)."""
+        if self.mppt_1_voltage is None or self.string_2_current is None:
+            return None
+        return round(self.mppt_1_voltage * self.string_2_current, 1)
+
+    @property
+    def string_3_power(self) -> float | None:
+        """mppt_2_voltage * string_3_current, in W (string 3 is on MPPT 2)."""
+        if self.mppt_2_voltage is None or self.string_3_current is None:
+            return None
+        return round(self.mppt_2_voltage * self.string_3_current, 1)

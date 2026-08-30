@@ -7,12 +7,26 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from modbus_connection import ModbusError, ModbusTcpParams
 from modbus_connection.tmodbus import ModbusConnection
 
-from .const import CONF_UNIT_ID, DEFAULT_PORT, DEFAULT_UNIT_ID, DOMAIN
+from .const import (
+    CONF_INCLUDE_METER,
+    CONF_INCLUDE_MPPT,
+    CONF_INCLUDE_STRINGS,
+    CONF_UNIT_ID,
+    DEFAULT_INCLUDE_METER,
+    DEFAULT_INCLUDE_MPPT,
+    DEFAULT_INCLUDE_STRINGS,
+    DEFAULT_PORT,
+    DEFAULT_UNIT_ID,
+    DOMAIN,
+    get_toggle,
+)
 from .sungrow_modbus import SungrowSGInverter
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,6 +36,9 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_HOST): str,
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
         vol.Optional(CONF_UNIT_ID, default=DEFAULT_UNIT_ID): int,
+        vol.Optional(CONF_INCLUDE_STRINGS, default=DEFAULT_INCLUDE_STRINGS): bool,
+        vol.Optional(CONF_INCLUDE_MPPT, default=DEFAULT_INCLUDE_MPPT): bool,
+        vol.Optional(CONF_INCLUDE_METER, default=DEFAULT_INCLUDE_METER): bool,
     }
 )
 
@@ -86,6 +103,53 @@ class SungrowSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         finally:
             await connection.close()
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> SungrowSGOptionsFlow:
+        return SungrowSGOptionsFlow()
+
+
+class SungrowSGOptionsFlow(OptionsFlow):
+    """Let the strings/MPPT/meter sensor groups be changed after setup.
+
+    No connection re-probe here on purpose - only the sensor groups
+    change, not host/port/unit_id (there's no step to edit those; add a
+    reconfigure flow separately if that's ever needed). __init__.py
+    registers an update listener that reloads the config entry whenever
+    options change - HA does NOT do that on its own, it only fires
+    update listeners (see ConfigEntries.async_update_entry's docstring).
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_INCLUDE_STRINGS,
+                    default=get_toggle(
+                        self.config_entry, CONF_INCLUDE_STRINGS, DEFAULT_INCLUDE_STRINGS
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_INCLUDE_MPPT,
+                    default=get_toggle(
+                        self.config_entry, CONF_INCLUDE_MPPT, DEFAULT_INCLUDE_MPPT
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_INCLUDE_METER,
+                    default=get_toggle(
+                        self.config_entry, CONF_INCLUDE_METER, DEFAULT_INCLUDE_METER
+                    ),
+                ): bool,
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
 
 
 class CannotConnect(Exception):

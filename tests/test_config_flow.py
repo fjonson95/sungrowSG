@@ -6,12 +6,28 @@ from homeassistant.config_entries import SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from modbus_connection import ModbusTimeoutError
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.sungrow_sg.const import CONF_UNIT_ID, DOMAIN
+from custom_components.sungrow_sg.const import (
+    CONF_INCLUDE_METER,
+    CONF_INCLUDE_MPPT,
+    CONF_INCLUDE_STRINGS,
+    CONF_UNIT_ID,
+    DOMAIN,
+)
 
 from .conftest import FakeModbusConnectionFactory, populate_realistic_readings
 
-USER_INPUT = {"host": "10.1.6.206", "port": 502, CONF_UNIT_ID: 1}
+# include_meter=True here (its own default is False) so this file's tests
+# exercise the full sensor set, matching test_coordinator.py/test_sensor.py.
+USER_INPUT = {
+    "host": "10.1.6.206",
+    "port": 502,
+    CONF_UNIT_ID: 1,
+    CONF_INCLUDE_STRINGS: True,
+    CONF_INCLUDE_MPPT: True,
+    CONF_INCLUDE_METER: True,
+}
 
 
 async def test_user_flow_success(
@@ -101,3 +117,53 @@ async def test_user_flow_aborts_on_duplicate(
 
     assert second["type"] is FlowResultType.ABORT
     assert second["reason"] == "already_configured"
+
+
+async def test_user_flow_fills_in_sensor_group_defaults(
+    hass: HomeAssistant, mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """Omitting the toggles falls back to strings=on, mppt=on, meter=off."""
+    populate_realistic_readings(mock_connection.for_unit(1))
+    minimal_input = {"host": "10.1.6.207", "port": 502, CONF_UNIT_ID: 1}
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], minimal_input
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_INCLUDE_STRINGS] is True
+    assert result["data"][CONF_INCLUDE_MPPT] is True
+    assert result["data"][CONF_INCLUDE_METER] is False
+
+
+async def test_options_flow_updates_sensor_group_toggles(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """The options flow (gear icon) can change the toggles after setup."""
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_INCLUDE_STRINGS: False,
+            CONF_INCLUDE_MPPT: False,
+            CONF_INCLUDE_METER: False,
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_INCLUDE_STRINGS] is False
+    assert entry.options[CONF_INCLUDE_MPPT] is False
+    assert entry.options[CONF_INCLUDE_METER] is False

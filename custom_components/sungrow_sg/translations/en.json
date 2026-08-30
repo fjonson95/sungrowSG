@@ -7,7 +7,10 @@
         "data": {
           "host": "Host",
           "port": "Port",
-          "unit_id": "Unit ID"
+          "unit_id": "Unit ID",
+          "include_strings": "Inkludera strängsensorer (ström & effekt per sträng)",
+          "include_mppt": "Inkludera MPPT-sensorer (spänning, ström & effekt)",
+          "include_meter": "Har du en elmätare/CT ansluten? (export, import, husbehov)"
         }
       }
     },
@@ -16,6 +19,18 @@
     },
     "abort": {
       "already_configured": "Enheten är redan konfigurerad."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sungrow SG-serien - sensorer",
+        "data": {
+          "include_strings": "Inkludera strängsensorer (ström & effekt per sträng)",
+          "include_mppt": "Inkludera MPPT-sensorer (spänning, ström & effekt)",
+          "include_meter": "Har du en elmätare/CT ansluten? (export, import, husbehov)"
+        }
+      }
     }
   },
   "entity": {
@@ -33,14 +48,19 @@
       "grid_frequency": { "name": "Nätfrekvens" },
       "mppt_1_voltage": { "name": "MPPT 1-spänning" },
       "mppt_1_current": { "name": "MPPT 1-ström" },
+      "mppt_1_power": { "name": "MPPT 1-effekt" },
       "mppt_2_voltage": { "name": "MPPT 2-spänning" },
       "mppt_2_current": { "name": "MPPT 2-ström" },
+      "mppt_2_power": { "name": "MPPT 2-effekt" },
       "total_dc_power": { "name": "Total DC-effekt" },
       "bus_voltage": { "name": "Busspänning" },
       "negative_voltage_to_ground": { "name": "Jordfelsspänning" },
       "string_1_current": { "name": "Sträng 1-ström" },
+      "string_1_power": { "name": "Sträng 1-effekt" },
       "string_2_current": { "name": "Sträng 2-ström" },
+      "string_2_power": { "name": "Sträng 2-effekt" },
       "string_3_current": { "name": "Sträng 3-ström" },
+      "string_3_power": { "name": "Sträng 3-effekt" },
       "daily_power_yield": { "name": "Dagens produktion" },
       "total_power_yield": { "name": "Total produktion" },
       "total_running_time": { "name": "Total drifttid" },
