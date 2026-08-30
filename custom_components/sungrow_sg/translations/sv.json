@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anslut Sungrow SG-serien",
+        "description": "Ange IP/host, port och Modbus unit-id för din inverter.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "unit_id": "Unit ID"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Det gick inte att ansluta till inverten."
+    },
+    "abort": {
+      "already_configured": "Enheten är redan konfigurerad."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "phase_a_voltage": { "name": "Fas A-spänning" },
+      "phase_b_voltage": { "name": "Fas B-spänning" },
+      "phase_c_voltage": { "name": "Fas C-spänning" },
+      "total_active_power": { "name": "Total aktiv effekt" },
+      "daily_power_yield": { "name": "Dagens produktion" },
+      "total_power_yield": { "name": "Total produktion" }
+    }
+  }
+}
