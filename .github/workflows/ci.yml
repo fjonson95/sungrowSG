@@ -15,3 +15,19 @@ jobs:
       - run: pip install -e library/sungrow-modbus[dev]
       - run: pytest library/sungrow-modbus/tests
       - run: ruff check library/sungrow-modbus
+
+  test-integration:
+    # Runs on Linux, not Windows: Home Assistant doesn't officially
+    # support Windows (homeassistant.runner imports the POSIX-only
+    # fcntl/resource stdlib modules unconditionally), and Linux's real
+    # AF_UNIX socketpair means none of the Windows-only workarounds in
+    # tests/conftest.py are needed here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements_test.txt
+      - run: pytest tests/
+      - run: ruff check custom_components tests

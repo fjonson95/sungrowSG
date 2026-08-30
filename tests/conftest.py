@@ -12,6 +12,7 @@ layer is faked.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator
 
 import pytest
@@ -19,20 +20,24 @@ import pytest_socket
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
 from sungrow_modbus import registers as reg
 
-# Windows has no real AF_UNIX socketpair, so asyncio's own internal
-# wakeup pipe (ProactorEventLoop._make_self_pipe) falls back to a real
-# loopback AF_INET pair. pytest-homeassistant-custom-component's own
-# pytest_runtest_setup hook unconditionally calls
-# pytest_socket.disable_socket(allow_unix_socket=True) before every
-# test, expecting that carve-out to cover exactly this wakeup socket -
-# true on Linux/macOS, but pytest_socket._is_unix_socket() is hardcoded
-# to always return False on Windows ("AF_UNIX not supported"), so the
-# carve-out never applies here and every event loop creation gets
-# blocked. No CLI flag reaches this (the plugin calls the pytest_socket
-# API directly, bypassing --allow-hosts). Patched at import time, before
-# the plugin below gets a chance to import pytest_socket itself, so both
-# get the same (patched) module object.
-pytest_socket._is_unix_socket = lambda family: True
+if sys.platform == "win32":
+    # Windows has no real AF_UNIX socketpair, so asyncio's own internal
+    # wakeup pipe (ProactorEventLoop._make_self_pipe) falls back to a
+    # real loopback AF_INET pair. pytest-homeassistant-custom-component's
+    # own pytest_runtest_setup hook unconditionally calls
+    # pytest_socket.disable_socket(allow_unix_socket=True) before every
+    # test, expecting that carve-out to cover exactly this wakeup socket
+    # - true on Linux/macOS, but pytest_socket._is_unix_socket() is
+    # hardcoded to always return False on Windows ("AF_UNIX not
+    # supported"), so the carve-out never applies here and every event
+    # loop creation gets blocked. No CLI flag reaches this (the plugin
+    # calls the pytest_socket API directly, bypassing --allow-hosts).
+    # Patched at import time, before the plugin below gets a chance to
+    # import pytest_socket itself, so both get the same (patched) module
+    # object. Windows-only: on Linux (e.g. CI) AF_UNIX works natively,
+    # and this patch would only weaken pytest_socket's real
+    # "block tests from touching the internet" guard for no reason.
+    pytest_socket._is_unix_socket = lambda family: True
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
