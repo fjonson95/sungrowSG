@@ -187,6 +187,39 @@ async def test_sensor_groups_can_be_excluded(
     )
 
 
+async def test_setup_prunes_stray_entities_from_a_more_permissive_past_config(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """A registry entry left over from before this pruning existed (or
+    from an old options change that never got cleaned up) is removed on
+    the very next setup - not just after a fresh options-flow change.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "host": "10.1.6.206",
+            "port": 502,
+            CONF_UNIT_ID: 1,
+            CONF_INCLUDE_STRINGS: False,
+            CONF_INCLUDE_MPPT: False,
+            CONF_INCLUDE_METER: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    entity_registry = er.async_get(hass)
+    stray_entity_id = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}_mppt_1_voltage",
+        config_entry=entry,
+    ).entity_id
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entity_registry.async_get(stray_entity_id) is None
+
+
 async def test_changing_options_reloads_and_updates_sensors(
     hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
 ) -> None:
@@ -194,12 +227,10 @@ async def test_changing_options_reloads_and_updates_sensors(
     listener must reload the entry, since HA doesn't do that on its own
     (see the comment on it in __init__.py).
 
-    Checks live state, not the entity registry: HA doesn't purge a
-    registry entry just because a reload no longer recreates it. Instead
-    the state machine keeps a "restored" placeholder showing
-    `unavailable` for it - the registry entry (and that placeholder)
-    persisting is normal, expected HA behavior, not a sign the toggle
-    didn't take effect.
+    A toggled-off group's entities are actually removed from the entity
+    registry (via __init__.py's _async_prune_disabled_sensors), not left
+    behind as a "restored"/unavailable placeholder - HA's reload alone
+    would only stop *creating* them, not remove the old registry entry.
     """
     entry = await _setup_entry(hass)  # ENTRY_DATA: all three groups on
     entity_registry = er.async_get(hass)
@@ -222,8 +253,10 @@ async def test_changing_options_reloads_and_updates_sensors(
     )
     await hass.async_block_till_done()
 
-    state = hass.states.get(mppt_entity_id)
-    assert state is None or state.state == "unavailable"
+    assert (
+        entity_registry.async_get_entity_id("sensor", DOMAIN, mppt_unique_id) is None
+    )
+    assert hass.states.get(mppt_entity_id) is None
 
 
 async def test_unload_entry_closes_the_connection(
