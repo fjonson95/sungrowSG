@@ -19,9 +19,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from modbus_connection import ModbusError, ModbusTcpParams
 from modbus_connection.tmodbus import ModbusConnection
-from sungrow_modbus import SungrowSGInverter
 
 from .const import CONF_UNIT_ID, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .sungrow_modbus import SungrowSGInverter
 
 _LOGGER = logging.getLogger(__name__)
 

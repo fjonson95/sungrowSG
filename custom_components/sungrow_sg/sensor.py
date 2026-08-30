@@ -1,10 +1,11 @@
 """Sensor platform for Sungrow SG-series.
 
-Every field exposed by `SungrowSGInverter` (see
-`library/sungrow-modbus/src/sungrow_modbus/models.py`) is wired here.
-`model_name`/`serial_number`/`protocol_version` go into `DeviceInfo`
-instead of separate sensor entities - that's what those fields are for
-in Home Assistant, and it avoids three redundant diagnostic sensors.
+Every field exposed by `SungrowSGInverter` (see `./sungrow_modbus/models.py`
+- a vendored copy of `library/sungrow-modbus/src/sungrow_modbus/models.py`,
+see that directory's README.md) is wired here. `model_name`/
+`serial_number`/`protocol_version` go into `DeviceInfo` instead of
+separate sensor entities - that's what those fields are for in Home
+Assistant, and it avoids three redundant diagnostic sensors.
 """
 
 from __future__ import annotations
@@ -30,10 +31,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from sungrow_modbus.const import OUTPUT_TYPE_LABELS, WORK_STATE_1_LABELS
 
 from .const import DOMAIN
 from .coordinator import SungrowSGCoordinator
+from .sungrow_modbus.const import OUTPUT_TYPE_LABELS, WORK_STATE_1_LABELS
 
 SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
     # --- AC measurements -----------------------------------------------------

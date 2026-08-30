@@ -1,12 +1,12 @@
 {
   "domain": "sungrow_sg",
   "name": "Sungrow SG-series",
-  "codeowners": ["@fjonson"],
+  "codeowners": ["@fjonson95"],
   "config_flow": true,
   "documentation": "https://github.com/fjonson95/sungrowSG",
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/fjonson95/sungrowSG/issues",
-  "requirements": ["sungrow-modbus==0.0.1"],
+  "requirements": ["modbus-connection[tmodbus]>=4.10"],
   "version": "0.0.1"
 }

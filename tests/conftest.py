@@ -18,7 +18,8 @@ from collections.abc import Generator
 import pytest
 import pytest_socket
 from modbus_connection.mock import MockModbusConnection, MockModbusUnit
-from sungrow_modbus import registers as reg
+
+from custom_components.sungrow_sg.sungrow_modbus import registers as reg
 
 if sys.platform == "win32":
     # Windows has no real AF_UNIX socketpair, so asyncio's own internal

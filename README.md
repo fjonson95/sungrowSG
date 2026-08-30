@@ -98,10 +98,16 @@ att bidra tillbaka till communityn om SG12RT-stödet blir bra.
    Night SVG) är avsiktligt inte wired in som skrivbara än — kräver en
    egen `Component` (annan `register_space`) och försiktig
    hårdvarutestning, se "Att göra" punkt 5 i `docs/register_map.md`.
-8. `custom_components/sungrow_sg/manifest.json` pekar på
-   `sungrow-modbus==0.0.1` som ett PyPI-krav, men paketet är bara lokalt
-   (inte publicerat) — HA:s riktiga requirements-installation skulle
-   faila på det. Måste lösas (publicera på PyPI, eller peka på en git-URL,
-   eller vendora biblioteket) innan integrationen kan installeras i en
-   riktig HA utan att manuellt ha `sungrow-modbus`/`modbus-connection`
-   redan installerat i samma Python-miljö.
+8. ~~`manifest.json` pekade på `sungrow-modbus==0.0.1` som ett PyPI-krav
+   för ett opublicerat paket~~ — löst: `sungrow_modbus` är vendorat rakt
+   in i `custom_components/sungrow_sg/sungrow_modbus/` (en committad
+   spegel av `library/sungrow-modbus/src/sungrow_modbus/`, se den mappens
+   README.md). `manifest.json` kräver nu bara `modbus-connection[tmodbus]`,
+   som faktiskt finns på PyPI. Verifierat: hela testsviten i `tests/`
+   går grönt även med `sungrow-modbus` avinstallerat helt ur test-venv:et
+   — integrationen är självförsörjande, precis som en riktig HA-
+   installation (via HACS eller manuell kopiering av
+   `custom_components/sungrow_sg/`) skulle vara. Efter ändringar i
+   `library/sungrow-modbus/src/sungrow_modbus/`, kör
+   `python scripts/sync_vendored_library.py` för att synka den vendorade
+   kopian innan commit.

@@ -18,7 +18,6 @@ import asyncio
 
 from modbus_connection import ModbusTcpParams
 from modbus_connection.tmodbus import ModbusConnection
-
 from sungrow_modbus import SungrowSGInverter
 
 

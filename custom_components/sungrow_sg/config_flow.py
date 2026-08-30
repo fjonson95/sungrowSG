@@ -11,9 +11,9 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
 from modbus_connection import ModbusError, ModbusTcpParams
 from modbus_connection.tmodbus import ModbusConnection
-from sungrow_modbus import SungrowSGInverter
 
 from .const import CONF_UNIT_ID, DEFAULT_PORT, DEFAULT_UNIT_ID, DOMAIN
+from .sungrow_modbus import SungrowSGInverter
 
 _LOGGER = logging.getLogger(__name__)
 
