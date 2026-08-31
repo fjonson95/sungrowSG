@@ -9,11 +9,12 @@ library/sungrow-modbus/      <- HA-oberoende: registerkunskap + modbus_connectio
 custom_components/sungrow_sg/ <- HA-integration: config_flow, coordinator, entiteter
 ```
 
-- `custom_components/sungrow_sg` öppnar ALDRIG en egen Modbus-anslutning.
-  Den ber kärnintegrationen `modbus` om en unit via
-  `modbus_connection.ModbusConnection(...).for_unit(unit_id)`, vilket delar
-  och serialiserar anslutningen med andra integrationer på samma buss
-  (t.ex. Modbus Manager om den körs mot samma inverter).
+- `custom_components/sungrow_sg` bygger en egen `ModbusConnection`
+  (`modbus_connection.tmodbus`, ett TCP-klientbibliotek, inte HA:s
+  kärnintegration `modbus`) i `coordinator.py`, en per config entry,
+  återanvänd över alla polls. `SungrowSGInverter` (läsning) och
+  `SungrowSGControl` (skrivning) delar samma `ModbusUnit` via
+  `connection.for_unit(unit_id)` - se `coordinator.py`.
 - Referensimplementationer att luta sig mot:
   - Bibliotek: https://github.com/Tom-Bom-badil/trovis-modbus/
   - HA-integration: `trovis557x` i Home Assistant core

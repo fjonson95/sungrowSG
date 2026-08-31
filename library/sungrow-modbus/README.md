@@ -10,6 +10,16 @@ repot och i fristående skript (se `scripts/query.py` i repo-roten).
 
 ## Status
 
-Skelett. Registeradresserna i `registers.py` är **inte verifierade** mot
-Sungrows officiella Modbus-protokolldokument — se `docs/register_map.md`
-i repo-roten.
+Registerkartan i `registers.py` är läst direkt ur Sungrows officiella
+protokolldokument (senast V1.1.80) och live-testad mot en riktig SG12RT
+— se `docs/register_map.md` i repo-roten för fullständig
+adress-för-adress-dokumentation, inklusive vad som är
+hårdvarubekräftat kontra bara PDF-verifierat.
+
+Testkörning:
+
+```bash
+pip install -e .[dev]
+pytest tests
+ruff check .
+```
