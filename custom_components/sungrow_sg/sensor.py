@@ -100,6 +100,16 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    # total_active_power as a % of nominal_active_power - "how much of
+    # this inverter's rated capacity is in use right now". Built for a
+    # dashboard bar/gauge card - see docs/register_map.md if you're
+    # looking for the underlying registers.
+    SensorEntityDescription(
+        key="capacity_utilization",
+        translation_key="capacity_utilization",
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
     SensorEntityDescription(
         key="total_reactive_power",
         translation_key="total_reactive_power",

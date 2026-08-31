@@ -231,6 +231,32 @@ async def test_calculated_string_power_uses_the_right_mppt_voltage(mock_modbus_u
     assert inverter.string_3_power == 1521.0  # 487.5 * 3.12 (MPPT 2)
 
 
+@pytest.mark.parametrize(
+    ("power_w", "nominal_raw", "expected_percent"),
+    [
+        (3370, 120, 28.1),  # 3.37kW / 12.0kW - typical daytime reading
+        (-5, 120, 0.0),  # briefly negative (S32) - clamped to 0, not negative
+        (13200, 120, 100.0),  # 110% overload - clamped to 100, not shown over
+    ],
+)
+async def test_capacity_utilization_scales_and_clamps(
+    mock_modbus_unit, power_w, nominal_raw, expected_percent
+):
+    mock_modbus_unit.input[reg.NOMINAL_ACTIVE_POWER.address] = nominal_raw
+    raw = power_w & 0xFFFFFFFF
+    mock_modbus_unit.input[reg.TOTAL_ACTIVE_POWER.address] = raw & 0xFFFF
+    mock_modbus_unit.input[reg.TOTAL_ACTIVE_POWER.address + 1] = raw >> 16
+
+    inverter = SungrowSGInverter(mock_modbus_unit)
+    await inverter.async_update()
+
+    assert inverter.capacity_utilization == expected_percent
+
+
+async def test_capacity_utilization_is_none_without_both_inputs(mock_modbus_unit):
+    assert SungrowSGInverter(mock_modbus_unit).capacity_utilization is None
+
+
 async def test_calculated_power_is_none_without_both_inputs(mock_modbus_unit):
     """No TypeError from None * None - before the first async_update(),
     and after restrict_fields() excludes an underlying field.

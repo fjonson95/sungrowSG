@@ -58,7 +58,7 @@ async def test_all_descriptions_create_an_entity_with_the_right_state(
     entry = await _setup_entry(hass)
     entity_registry = er.async_get(hass)
 
-    assert len(SENSOR_DESCRIPTIONS) == 54
+    assert len(SENSOR_DESCRIPTIONS) == 55
 
     for description in SENSOR_DESCRIPTIONS:
         unique_id = f"{entry.entry_id}_{description.key}"

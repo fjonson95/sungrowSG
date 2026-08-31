@@ -131,6 +131,7 @@ class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "phase_b_current": inverter.phase_b_current,
             "phase_c_current": inverter.phase_c_current,
             "total_active_power": inverter.total_active_power,
+            "capacity_utilization": inverter.capacity_utilization,
             "total_reactive_power": inverter.total_reactive_power,
             "total_apparent_power": inverter.total_apparent_power,
             "power_factor": inverter.power_factor,

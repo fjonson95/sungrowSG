@@ -151,6 +151,7 @@ EXPECTED_READINGS: dict[str, object] = {
     "phase_b_current": 4.8,
     "phase_c_current": 4.8,
     "total_active_power": 3370,
+    "capacity_utilization": 28.1,  # 3370 / (12.0 * 1000) * 100
     "total_reactive_power": 4,
     "total_apparent_power": 3370,
     "power_factor": 1.0,

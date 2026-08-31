@@ -42,6 +42,7 @@
       "phase_b_current": { "name": "Fas B-ström" },
       "phase_c_current": { "name": "Fas C-ström" },
       "total_active_power": { "name": "Total aktiv effekt" },
+      "capacity_utilization": { "name": "Kapacitetsutnyttjande" },
       "total_reactive_power": { "name": "Total reaktiv effekt" },
       "total_apparent_power": { "name": "Total skenbar effekt" },
       "power_factor": { "name": "Effektfaktor" },

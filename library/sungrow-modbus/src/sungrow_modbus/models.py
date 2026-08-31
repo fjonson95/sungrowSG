@@ -432,6 +432,27 @@ class SungrowSGInverter(Component):
             return None
         return round(self.mppt_2_voltage * self.string_3_current, 1)
 
+    @property
+    def capacity_utilization(self) -> float | None:
+        """total_active_power as a percentage of nominal_active_power -
+        "how much of this inverter's rated capacity is being used right
+        now". nominal_active_power is read from the inverter itself
+        (kW), not hardcoded, so this works for any SG-series model, not
+        just SG12RT.
+
+        Clamped to [0, 100]: total_active_power is signed (can briefly
+        read slightly negative during fault/standby transitions - see
+        registers.py TOTAL_ACTIVE_POWER) and a >100% overload reading is
+        possible on models that support overload running, but a
+        "utilization" percentage isn't meant to display either.
+        """
+        power = self.total_active_power
+        nominal = self.nominal_active_power
+        if power is None or nominal is None or nominal == 0:
+            return None
+        percent = (power / (nominal * 1000)) * 100
+        return round(min(max(percent, 0.0), 100.0), 1)
+
 
 def _validate_start_stop(value: object) -> int:
     """True starts the inverter (0xCF), False stops it (0xCE).
