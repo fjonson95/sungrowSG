@@ -3,8 +3,9 @@
     "step": {
       "user": {
         "title": "Anslut Sungrow SG-serien",
-        "description": "Ange IP/host, port och Modbus unit-id för din inverter.",
+        "description": "Ange ett namn (används som prefix i alla sensornamn), IP/host, port och Modbus unit-id för din inverter.",
         "data": {
+          "name": "Namn",
           "host": "Host",
           "port": "Port",
           "unit_id": "Unit ID",
@@ -26,6 +27,7 @@
       "init": {
         "title": "Sungrow SG-serien - sensorer",
         "data": {
+          "name": "Namn",
           "include_strings": "Inkludera strängsensorer (ström & effekt per sträng)",
           "include_mppt": "Inkludera MPPT-sensorer (spänning, ström & effekt)",
           "include_meter": "Har du en elmätare/CT ansluten? (export, import, husbehov)"

@@ -12,6 +12,12 @@ DOMAIN = "sungrow_sg"
 CONF_UNIT_ID = "unit_id"
 DEFAULT_UNIT_ID = 1
 DEFAULT_PORT = 502
+# Used as the config entry title (and therefore the device/entity name
+# prefix - see entity.py build_device_info) when the user doesn't set
+# CONF_NAME. Deliberately doesn't include the host - an IP address in
+# every entity's friendly name (e.g. "Sungrow SG (10.1.6.206) Fas
+# A-spänning") is exactly what CONF_NAME exists to let users avoid.
+DEFAULT_NAME = "Sungrow SG"
 DEFAULT_SCAN_INTERVAL = 30  # seconds
 
 # Optional sensor groups - not every SG12RT installation has strings worth

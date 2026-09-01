@@ -54,6 +54,9 @@ mapp och starta om Home Assistant.
 Inställningar → Enheter & tjänster → Lägg till integration → "Sungrow
 SG-series". Du behöver:
 
+- **Namn** — används som prefix i alla sensor-/enhetsnamn (standard
+  `Sungrow SG`, ingen IP-adress i det). Kan ändras när som helst via
+  Alternativ.
 - **Host** — invertern IP-adress.
 - **Port** — Modbus TCP-port (standard `502`).
 - **Unit ID** — Modbus-enhets-id (standard `1`).

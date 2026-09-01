@@ -8,7 +8,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
-from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from modbus_connection import ModbusError, ModbusTcpParams
@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_INCLUDE_METER,
     DEFAULT_INCLUDE_MPPT,
     DEFAULT_INCLUDE_STRINGS,
+    DEFAULT_NAME,
     DEFAULT_PORT,
     DEFAULT_UNIT_ID,
     DOMAIN,
@@ -33,6 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
+        vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
         vol.Required(CONF_HOST): str,
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
         vol.Optional(CONF_UNIT_ID, default=DEFAULT_UNIT_ID): int,
@@ -65,9 +67,14 @@ class SungrowSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
+                # CONF_NAME becomes the entry title (and therefore the
+                # device/entity name prefix, see entity.py
+                # build_device_info) - not stored in entry.data, same
+                # reasoning as why it's kept out of entry.options in
+                # SungrowSGOptionsFlow below.
+                data = {k: v for k, v in user_input.items() if k != CONF_NAME}
                 return self.async_create_entry(
-                    title=f"Sungrow SG ({user_input[CONF_HOST]})",
-                    data=user_input,
+                    title=user_input[CONF_NAME], data=data
                 )
 
         return self.async_show_form(
@@ -111,11 +118,12 @@ class SungrowSGConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class SungrowSGOptionsFlow(OptionsFlow):
-    """Let the strings/MPPT/meter sensor groups be changed after setup.
+    """Let the name and the strings/MPPT/meter sensor groups be changed
+    after setup.
 
-    No connection re-probe here on purpose - only the sensor groups
-    change, not host/port/unit_id (there's no step to edit those; add a
-    reconfigure flow separately if that's ever needed). __init__.py
+    No connection re-probe here on purpose - only the name and sensor
+    groups change, not host/port/unit_id (there's no step to edit those;
+    add a reconfigure flow separately if that's ever needed). __init__.py
     registers an update listener that reloads the config entry whenever
     options change - HA does NOT do that on its own, it only fires
     update listeners (see ConfigEntries.async_update_entry's docstring).
@@ -125,10 +133,22 @@ class SungrowSGOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         if user_input is not None:
+            # CONF_NAME is the entry title, not an "option" - update it
+            # directly and keep it out of entry.options (matches how the
+            # initial user step keeps it out of entry.data). Same
+            # __init__.py update listener that reloads on an options
+            # change also handles a title-only change on its own, but
+            # updating the title is a separate call regardless.
+            new_name = user_input.pop(CONF_NAME, None)
+            if new_name and new_name != self.config_entry.title:
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, title=new_name
+                )
             return self.async_create_entry(data=user_input)
 
         schema = vol.Schema(
             {
+                vol.Optional(CONF_NAME, default=self.config_entry.title): str,
                 vol.Optional(
                     CONF_INCLUDE_STRINGS,
                     default=get_toggle(

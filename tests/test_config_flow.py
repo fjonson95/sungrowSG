@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import SOURCE_USER
+from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from modbus_connection import ModbusTimeoutError
@@ -48,7 +49,29 @@ async def test_user_flow_success(
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Sungrow SG (10.1.6.206)"
+    assert result["title"] == "Sungrow SG"  # default name - no IP in it
+    assert result["data"] == USER_INPUT
+
+
+async def test_user_flow_with_custom_name(
+    hass: HomeAssistant, mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """A custom name becomes the entry title, not a data field - keeps
+    entry.data limited to the actual Modbus connection parameters.
+    """
+    populate_realistic_readings(mock_connection.for_unit(1))
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {**USER_INPUT, CONF_NAME: "Garage"}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Garage"
+    assert CONF_NAME not in result["data"]
     assert result["data"] == USER_INPUT
 
 
@@ -167,3 +190,32 @@ async def test_options_flow_updates_sensor_group_toggles(
     assert entry.options[CONF_INCLUDE_STRINGS] is False
     assert entry.options[CONF_INCLUDE_MPPT] is False
     assert entry.options[CONF_INCLUDE_METER] is False
+
+
+async def test_options_flow_renames_the_entry(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """The name can be changed after setup too, not just at creation -
+    updates entry.title directly, not entry.options (matches the initial
+    user step keeping CONF_NAME out of entry.data).
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data=USER_INPUT, title="Sungrow SG")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_NAME: "Garage",
+            CONF_INCLUDE_STRINGS: True,
+            CONF_INCLUDE_MPPT: True,
+            CONF_INCLUDE_METER: True,
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.title == "Garage"
+    assert CONF_NAME not in entry.options

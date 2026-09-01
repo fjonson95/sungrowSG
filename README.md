@@ -54,6 +54,8 @@ directory and restart Home Assistant.
 Settings → Devices & services → Add integration → "Sungrow SG-series".
 You'll need:
 
+- **Name** — used as the device/entity name prefix (default `Sungrow
+  SG`, no IP address in it). Change it any time via Options.
 - **Host** — the inverter's IP address.
 - **Port** — Modbus TCP port (default `502`).
 - **Unit ID** — Modbus unit id (default `1`).
