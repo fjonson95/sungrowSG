@@ -15,6 +15,12 @@ custom_components/sungrow_sg/ <- HA-integration: config_flow, coordinator, entit
   återanvänd över alla polls. `SungrowSGInverter` (läsning) och
   `SungrowSGControl` (skrivning) delar samma `ModbusUnit` via
   `connection.for_unit(unit_id)` - se `coordinator.py`.
+- `SungrowSGCoordinator._async_update_data` retryar upp till 3 gånger
+  (10s mellanrum) på `ModbusError` innan `UpdateFailed` propagerar - en
+  enskild tappad TCP-timeout ska inte direkt slå ut alla entiteter till
+  `unavailable`. Ett dygnsräknat antal `ModbusTimeoutError` exponeras
+  som en diagnostisk sensor (`timeout_count_today`) - ren
+  coordinator-state, inget Modbus-register.
 - Referensimplementationer att luta sig mot:
   - Bibliotek: https://github.com/Tom-Bom-badil/trovis-modbus/
   - HA-integration: `trovis557x` i Home Assistant core
