@@ -450,6 +450,18 @@ SENSOR_DESCRIPTIONS: tuple[SensorEntityDescription, ...] = (
         translation_key="dsp_software_version",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # Coordinator-side counter, not a Modbus register - see
+    # coordinator.py _async_update_data. Counts ModbusTimeoutError
+    # specifically (not other ModbusError subclasses), reset at local
+    # midnight. TOTAL_INCREASING is the same pattern used for
+    # daily_power_yield/daily_running_time above - a value that resets
+    # to 0 once a day, not a strictly-ever-increasing counter.
+    SensorEntityDescription(
+        key="timeout_count_today",
+        translation_key="timeout_count_today",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
 )
 
 

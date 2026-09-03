@@ -58,7 +58,7 @@ async def test_all_descriptions_create_an_entity_with_the_right_state(
     entry = await _setup_entry(hass)
     entity_registry = er.async_get(hass)
 
-    assert len(SENSOR_DESCRIPTIONS) == 55
+    assert len(SENSOR_DESCRIPTIONS) == 56
 
     for description in SENSOR_DESCRIPTIONS:
         unique_id = f"{entry.entry_id}_{description.key}"
@@ -143,6 +143,7 @@ async def test_diagnostic_entities_are_categorized(
         "daily_running_time",
         "fault_alarm_label",
         "fault_alarm_time",
+        "timeout_count_today",
     }
 
     for key in diagnostic_keys:

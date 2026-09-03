@@ -9,6 +9,7 @@ the modbus-connection docs); we don't open/close a socket per poll.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
@@ -18,7 +19,8 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from modbus_connection import ModbusError, ModbusTcpParams
+from homeassistant.util import dt as dt_util
+from modbus_connection import ModbusError, ModbusTcpParams, ModbusTimeoutError
 from modbus_connection.tmodbus import ModbusConnection
 
 from .const import (
@@ -37,6 +39,12 @@ from .const import (
 from .sungrow_modbus import SungrowSGControl, SungrowSGInverter
 
 _LOGGER = logging.getLogger(__name__)
+
+# A transient Modbus TCP timeout (a dropped packet, a brief network blip)
+# shouldn't immediately mark every entity unavailable - retry a few times,
+# spaced out, before giving up. See _async_update_data.
+_UPDATE_RETRY_ATTEMPTS = 3
+_UPDATE_RETRY_DELAY_SECONDS = 10
 
 
 def _is_enabled(value: Any, *, on: int) -> bool | None:
@@ -58,6 +66,12 @@ class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name=DOMAIN,
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
+        # Counts every ModbusTimeoutError attempt specifically (not other
+        # ModbusError subclasses, and not just full-poll UpdateFailed
+        # events - a retry that eventually succeeds still counts), reset
+        # at local midnight. See _async_update_data.
+        self._timeout_count = 0
+        self._timeout_count_day = dt_util.now().date()
         self._connection = ModbusConnection(
             ModbusTcpParams(host=entry.data[CONF_HOST], port=entry.data[CONF_PORT])
         )
@@ -85,15 +99,50 @@ class SungrowSGCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
-        try:
-            await self._inverter.async_update()
-            await self._control.async_update()
-        except ModbusError as err:
-            raise UpdateFailed(f"Error communicating with inverter: {err}") from err
+        # Reset the daily timeout counter on the first poll of a new
+        # local day - checked unconditionally (not just on failure) so a
+        # quiet day correctly shows 0 instead of carrying over
+        # yesterday's count until the next failure happens to occur.
+        today = dt_util.now().date()
+        if today != self._timeout_count_day:
+            self._timeout_count = 0
+            self._timeout_count_day = today
+
+        # A single dropped poll (e.g. one Modbus TCP timeout) shouldn't
+        # flip every entity to unavailable - retry a couple of times
+        # first. Only give up and let UpdateFailed propagate (which is
+        # what actually marks entities unavailable) after
+        # _UPDATE_RETRY_ATTEMPTS straight failures.
+        last_err: ModbusError | None = None
+        for attempt in range(1, _UPDATE_RETRY_ATTEMPTS + 1):
+            try:
+                await self._inverter.async_update()
+                await self._control.async_update()
+            except ModbusError as err:
+                last_err = err
+                if isinstance(err, ModbusTimeoutError):
+                    self._timeout_count += 1
+                _LOGGER.debug(
+                    "Modbus read failed (attempt %d/%d): %s",
+                    attempt,
+                    _UPDATE_RETRY_ATTEMPTS,
+                    err,
+                )
+                if attempt < _UPDATE_RETRY_ATTEMPTS:
+                    await asyncio.sleep(_UPDATE_RETRY_DELAY_SECONDS)
+                continue
+            else:
+                break
+        else:
+            raise UpdateFailed(
+                f"Error communicating with inverter after {_UPDATE_RETRY_ATTEMPTS} "
+                f"attempts: {last_err}"
+            ) from last_err
 
         inverter = self._inverter
         control = self._control
         return {
+            "timeout_count_today": self._timeout_count,
             # Writable controls (holding registers). start_stop/
             # power_limitation_switch/night_svg_switch come back from the
             # register as raw enum ints (0xCF/0xCE, 0xAA/0x55) - turned

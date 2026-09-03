@@ -15,14 +15,14 @@ direkt med invertern på ditt lokala nätverk.
 
 ## Funktioner
 
-- **55 sensorer**: AC-mätvärden (fas­spänning/ström, effekt, frekvens),
+- **56 sensorer**: AC-mätvärden (fas­spänning/ström, effekt, frekvens),
   DC/MPPT (spänning, ström, beräknad effekt per MPPT och per sträng),
   energiproduktion (dagens/månadens/totalt), elmätarblock
   (export/import/husbehov, kräver extern CT/smart-mätare), diagnostik
   (temperatur, isolationsresistans, driftstatus, felkoder från Sungrows
-  Appendix 4-tabell, firmware-versioner) och en beräknad
-  kapacitetsutnyttjande-sensor (aktuell effekt som % av märkeffekt, för
-  stapel-/gauge-kort).
+  Appendix 4-tabell, firmware-versioner, antal Modbus-timeouts per dygn)
+  och en beräknad kapacitetsutnyttjande-sensor (aktuell effekt som % av
+  märkeffekt, för stapel-/gauge-kort).
 - **2 binärsensorer**: nätansluten, fel.
 - **Skrivbara kontroller** (switch/number-entiteter): start/stopp,
   effektbegränsning (på/av + nivå i % eller absolut kW), separat
@@ -34,6 +34,9 @@ direkt med invertern på ditt lokala nätverk.
   ur entity-registret, inte bara dolda.
 - Egen enhet i enhetsregistret (modell, serienummer, protokollversion),
   UI-konfiguration (config flow, ingen YAML).
+- En tillfällig Modbus-timeout gör inte att sensorerna direkt blir
+  otillgängliga — en poll försöks igen upp till 3 gånger, 10 sekunder
+  mellan varje, innan den ger upp.
 
 ## Installation
 

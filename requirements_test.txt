@@ -19,4 +19,8 @@
 # tooling, so this one environment can also run
 # `pytest library/sungrow-modbus/tests` - see scripts/sync_vendored_library.py.
 pytest-homeassistant-custom-component
+# Direct dependency (test_coordinator.py's timeout-counter tests use
+# freeze_time) - also a transitive dep of pytest-homeassistant-custom-component,
+# but pinned explicitly here since we import it directly.
+freezegun
 -e library/sungrow-modbus[dev]

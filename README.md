@@ -15,14 +15,14 @@ talks directly to the inverter on your local network.
 
 ## Features
 
-- **55 sensors**: AC measurements (phase voltage/current, power,
+- **56 sensors**: AC measurements (phase voltage/current, power,
   frequency), DC/MPPT (voltage, current, calculated power per MPPT and
   per string), energy yield (daily/monthly/total), grid meter block
   (export/import/house load, requires an external CT/smart meter),
   diagnostics (temperature, insulation resistance, work state, fault
-  codes from Sungrow's Appendix 4 table, firmware versions), and a
-  calculated capacity-utilization sensor (current power as a % of rated
-  power, for dashboard bar/gauge cards).
+  codes from Sungrow's Appendix 4 table, firmware versions, daily
+  Modbus-timeout count), and a calculated capacity-utilization sensor
+  (current power as a % of rated power, for dashboard bar/gauge cards).
 - **2 binary sensors**: grid-connected, fault.
 - **Writable controls** (switch/number entities): start/stop, power
   limitation (on/off + level as % or absolute kW), a separate feed-in
@@ -34,6 +34,9 @@ talks directly to the inverter on your local network.
   entity registry, not just hidden.
 - A proper device in the device registry (model, serial number,
   protocol version), UI configuration (config flow, no YAML).
+- A transient Modbus timeout doesn't immediately mark every entity
+  unavailable — a poll is retried up to 3 times, 10 seconds apart,
+  before giving up.
 
 ## Installation
 

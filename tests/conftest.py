@@ -209,6 +209,7 @@ EXPECTED_READINGS: dict[str, object] = {
     "feed_in_power_limit_value": 0.0,
     "feed_in_power_limit_ratio": 100.0,
     "night_svg_enabled": False,
+    "timeout_count_today": 0,
 }
 
 

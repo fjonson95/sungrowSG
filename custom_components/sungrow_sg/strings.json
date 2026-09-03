@@ -87,6 +87,7 @@
       "protocol_no": { "name": "Protokollnummer" },
       "arm_software_version": { "name": "ARM-mjukvaruversion" },
       "dsp_software_version": { "name": "DSP-mjukvaruversion" },
+      "timeout_count_today": { "name": "Antal timeouts idag" },
       "work_state_2": { "name": "Driftstatus (bitmask)" },
       "work_state_1_label": {
         "name": "Driftstatus",

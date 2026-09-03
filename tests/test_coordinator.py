@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
+from freezegun import freeze_time
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -56,16 +59,113 @@ async def test_update_data_returns_every_expected_field(
 async def test_update_failure_marks_coordinator_unsuccessful(
     hass: HomeAssistant, mock_connection: FakeModbusConnectionFactory
 ) -> None:
-    """A ModbusError from the inverter becomes UpdateFailed, not a crash."""
+    """A ModbusError that persists across all retry attempts becomes
+    UpdateFailed, not a crash - only then does the coordinator (and so
+    every entity) actually go unavailable.
+    """
     mock_connection.for_unit(1).fail_requests(ModbusTimeoutError("simulated timeout"))
     entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
     entry.add_to_hass(hass)
     coordinator = SungrowSGCoordinator(hass, entry)
 
-    await coordinator.async_refresh()
+    with patch(
+        "custom_components.sungrow_sg.coordinator.asyncio.sleep", new=AsyncMock()
+    ) as mock_sleep:
+        await coordinator.async_refresh()
 
     assert coordinator.last_update_success is False
     assert isinstance(coordinator.last_exception, UpdateFailed)
+    # 3 attempts, 10s apart -> 2 sleeps, not 3 (no point waiting after the
+    # last attempt).
+    assert mock_sleep.call_count == 2
+    assert mock_sleep.call_args_list[0].args == (10,)
+
+
+async def test_update_recovers_after_a_transient_failure(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """A timeout on the first attempt that clears before the retry limit
+    is reached must NOT mark the coordinator unsuccessful - this is the
+    whole point of retrying before giving up.
+    """
+    unit = populated_mock_connection.for_unit(1)
+    unit.fail_requests(ModbusTimeoutError("simulated timeout"))
+    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
+    entry.add_to_hass(hass)
+    coordinator = SungrowSGCoordinator(hass, entry)
+
+    async def clear_failure_after_first_sleep(*_args: object) -> None:
+        unit.fail_requests(None)
+
+    with patch(
+        "custom_components.sungrow_sg.coordinator.asyncio.sleep",
+        new=AsyncMock(side_effect=clear_failure_after_first_sleep),
+    ) as mock_sleep:
+        await coordinator.async_refresh()
+
+    assert coordinator.last_update_success is True
+    assert mock_sleep.call_count == 1  # succeeded on the 2nd attempt
+
+
+async def test_timeout_count_increments_per_failed_attempt(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """timeout_count_today counts every failed attempt within a poll, not
+    just full-poll failures - a poll that fails twice then succeeds on
+    its 3rd attempt should still count 2.
+    """
+    unit = populated_mock_connection.for_unit(1)
+    unit.fail_requests(ModbusTimeoutError("simulated timeout"))
+    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
+    entry.add_to_hass(hass)
+    coordinator = SungrowSGCoordinator(hass, entry)
+
+    sleeps = 0
+
+    async def clear_failure_after_second_sleep(*_args: object) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps >= 2:
+            unit.fail_requests(None)
+
+    with patch(
+        "custom_components.sungrow_sg.coordinator.asyncio.sleep",
+        new=AsyncMock(side_effect=clear_failure_after_second_sleep),
+    ):
+        await coordinator.async_refresh()
+
+    assert coordinator.last_update_success is True
+    assert coordinator.data["timeout_count_today"] == 2
+
+
+async def test_timeout_count_resets_at_local_midnight(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """The counter is a per-day tally, not a running total since startup."""
+    unit = populated_mock_connection.for_unit(1)
+    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA)
+    entry.add_to_hass(hass)
+
+    with freeze_time("2026-09-01 12:00:00"):
+        coordinator = SungrowSGCoordinator(hass, entry)
+        unit.fail_requests(ModbusTimeoutError("simulated timeout"))
+        with patch(
+            "custom_components.sungrow_sg.coordinator.asyncio.sleep", new=AsyncMock()
+        ):
+            await coordinator.async_refresh()
+        assert coordinator.last_update_success is False  # all 3 attempts failed
+
+        unit.fail_requests(None)
+        await coordinator.async_refresh()
+        assert coordinator.data["timeout_count_today"] == 3
+
+    # +2 UTC days, not +1 - a naive "next day" UTC timestamp can still
+    # land on the same local calendar day depending on the test
+    # environment's timezone (dt_util.now() is local-zone-aware, by
+    # design - see the reset check's comment above).
+    with freeze_time("2026-09-03 12:00:00"):
+        await coordinator.async_refresh()
+        assert coordinator.data["timeout_count_today"] == 0
 
 
 async def test_shutdown_closes_the_connection(
