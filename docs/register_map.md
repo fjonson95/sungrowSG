@@ -287,6 +287,20 @@ effektbegränsningen till default** om man inte separat aktiverat "Active
 Power Setting Persistence" via Sungrows app (finns inget Modbus-register
 för det - bara i appen).
 
+**Intervall bekräftat 2026-09-15:** Appendix 1 "Adaptive Inverter
+Models" listar SG12RT:s "Power limited range" som `0-1100` (0.1%) =
+**0-110.0%** resp. `0-132` (0.1kW) = **0-13.2kW** (110% av 12kW
+märkeffekt - kapitel 3.1.2: "For inverters that support overload
+running, the maximum value can be set to 110%."). `number.py`s
+UI-gräns för `power_limitation_setting` satt till 110% (modellobereoende,
+kapitel 3.1.2 är en generell regel). `power_limitation_adjustment`s
+kW-gräns är **inte** hårdkodad till 13.2 - `number.py` räknar den som
+`nominal_active_power * 1.10` vid varje avläsning
+(`SungrowSGNumber.native_max_value`), så samma kod ger rätt gräns även
+för en annan SG-modell än SG12RT. 13.2 finns kvar bara som
+`NumberEntityDescription`s statiska fallback innan första lyckade
+avläsning.
+
 **Nytt, nu implementerat** (användaren valde dessa två grupper 2026-08-30):
 
 - **`power_limitation_adjustment`** (doc 5039, 0.1kW) - alternativ till

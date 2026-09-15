@@ -516,11 +516,12 @@ class SungrowSGControl(Component):
     power_limitation_switch = gauge(
         reg.POWER_LIMITATION_SWITCH.address, scale=1, writable=_validate_enable_disable
     )
-    # No documented min/max found for this one (the doc's note "See
-    # Appendix 6" implies a model-specific range, unconfirmed for
-    # SG12RT) - relies on the inverter's own firmware to reject an
-    # out-of-range write rather than a guessed client-side limit that
-    # might be wrong in either direction.
+    # Appendix 1 "Adaptive Inverter Models" (V1.1.80) confirms SG12RT's
+    # range as "0-1100" (0.1%) = 0-110.0% (110% overload running is
+    # supported per chapter 3.1.2). Not clamped here - this Component is
+    # a thin pass-through to the register; custom_components/sungrow_sg
+    # number.py is where a UI-facing min/max lives. The inverter's own
+    # firmware remains the real authority regardless.
     power_limitation_setting = gauge(
         reg.POWER_LIMITATION_SETTING.address,
         scale=reg.POWER_LIMITATION_SETTING.scale,

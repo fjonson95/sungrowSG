@@ -36,6 +36,12 @@ class SungrowSGNumberEntityDescription(NumberEntityDescription):
     """
 
     async_set_value: Callable[[SungrowSGCoordinator, float], Awaitable[None]]
+    # When set, native_max_value is computed at runtime as
+    # nominal_active_power * this multiplier instead of the static
+    # native_max_value above - see SungrowSGNumber.native_max_value.
+    # native_max_value above still serves as the fallback before the
+    # first successful poll (when nominal_active_power isn't known yet).
+    max_value_multiplier_of_nominal_power: float | None = None
 
 
 NUMBER_DESCRIPTIONS: tuple[SungrowSGNumberEntityDescription, ...] = (
@@ -43,13 +49,15 @@ NUMBER_DESCRIPTIONS: tuple[SungrowSGNumberEntityDescription, ...] = (
         key="power_limitation_setting",
         translation_key="power_limitation_setting",
         native_unit_of_measurement="%",
-        # Doc's own note ("See Appendix 6") implies a model-specific
-        # range not confirmed for SG12RT - see registers.py
-        # POWER_LIMITATION_SETTING. 0-100 is a conservative UI bound;
-        # the inverter's own firmware is the real authority and will
-        # reject an out-of-range write regardless of this limit.
+        # Appendix 1 "Adaptive Inverter Models" (V1.1.80) lists SG12RT's
+        # power-limited range (0.1%) as "0-1100" = 0-110.0% (110% overload
+        # running is supported - see chapter 3.1.2 "For inverters that
+        # support overload running, the maximum value can be set to
+        # 110%."). The inverter's own firmware is still the real
+        # authority and will reject an out-of-range write regardless of
+        # this UI bound.
         native_min_value=0,
-        native_max_value=100,
+        native_max_value=110,
         native_step=0.1,
         mode=NumberMode.BOX,
         entity_category=EntityCategory.CONFIG,
@@ -67,14 +75,19 @@ NUMBER_DESCRIPTIONS: tuple[SungrowSGNumberEntityDescription, ...] = (
         key="power_limitation_adjustment",
         translation_key="power_limitation_adjustment",
         native_unit_of_measurement="kW",
-        # No documented upper bound beyond "the inverter's max active
-        # power" (model-specific, see Appendix 1) - a generous but not
-        # unbounded UI ceiling; the inverter's firmware is the real limit.
+        # Appendix 1 gives SG12RT's absolute range as "0-132" (0.1kW) =
+        # 0-13.2 kW, i.e. 110% of its 12kW rated power - not a fixed
+        # figure, since a different SG-series model has a different
+        # rated power. max_value_multiplier_of_nominal_power below
+        # computes the real max as nominal_active_power * 1.10 at
+        # runtime, so this works for any model; 13.2 here only serves as
+        # the fallback before the first successful poll.
         native_min_value=0,
-        native_max_value=50,
+        native_max_value=13.2,
         native_step=0.1,
         mode=NumberMode.BOX,
         entity_category=EntityCategory.CONFIG,
+        max_value_multiplier_of_nominal_power=1.10,
         async_set_value=(
             lambda coordinator,
             value: coordinator.async_set_power_limitation_adjustment(value)
@@ -145,6 +158,15 @@ class SungrowSGNumber(CoordinatorEntity[SungrowSGCoordinator], NumberEntity):
     @property
     def native_value(self) -> float | None:
         return self.coordinator.data.get(self.entity_description.key)
+
+    @property
+    def native_max_value(self) -> float:
+        multiplier = self.entity_description.max_value_multiplier_of_nominal_power
+        if multiplier is not None:
+            nominal = self.coordinator.data.get("nominal_active_power")
+            if nominal is not None:
+                return round(nominal * multiplier, 1)
+        return super().native_max_value
 
     async def async_set_native_value(self, value: float) -> None:
         await self.entity_description.async_set_value(self.coordinator, value)

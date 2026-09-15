@@ -8,6 +8,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.sungrow_sg.const import CONF_UNIT_ID, DOMAIN
+from custom_components.sungrow_sg.sungrow_modbus import registers as reg
 
 from .conftest import EXPECTED_READINGS, FakeModbusConnectionFactory
 
@@ -35,7 +36,7 @@ async def test_power_limitation_setting_reflects_current_value(
     state = hass.states.get(entity_id)
     assert float(state.state) == EXPECTED_READINGS["power_limitation_setting"]
     assert state.attributes["min"] == 0
-    assert state.attributes["max"] == 100
+    assert state.attributes["max"] == 110
 
 
 async def test_setting_the_value_writes_the_scaled_register(
@@ -58,6 +59,27 @@ async def test_setting_the_value_writes_the_scaled_register(
 
     assert events[-1].values == [425]
     assert hass.states.get(entity_id).state == "42.5"
+
+
+async def test_power_limitation_adjustment_max_scales_with_nominal_power(
+    hass: HomeAssistant, populated_mock_connection: FakeModbusConnectionFactory
+) -> None:
+    """The absolute-kW ceiling is 110% of THIS inverter's own rated
+    power, not a hardcoded SG12RT figure - proven here by using a
+    different nominal_active_power than the default fixture's 12.0 kW.
+    """
+    populated_mock_connection.for_unit(1).input[
+        reg.NOMINAL_ACTIVE_POWER.address
+    ] = 50  # 5.0 kW - a hypothetical smaller model, not SG12RT's 12.0
+    entry = await _setup_entry(hass)
+    entity_registry = er.async_get(hass)
+    entity_id = entity_registry.async_get_entity_id(
+        "number", DOMAIN, f"{entry.entry_id}_power_limitation_adjustment"
+    )
+    assert entity_id is not None
+
+    state = hass.states.get(entity_id)
+    assert state.attributes["max"] == 5.5  # 5.0 * 1.10
 
 
 async def test_power_limitation_setting_is_config_category(
