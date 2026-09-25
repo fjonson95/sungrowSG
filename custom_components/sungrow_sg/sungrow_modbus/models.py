@@ -522,10 +522,14 @@ class SungrowSGControl(Component):
     # a thin pass-through to the register; custom_components/sungrow_sg
     # number.py is where a UI-facing min/max lives. The inverter's own
     # firmware remains the real authority regardless.
+    # The four numeric control registers below are U16 per the doc - gauge()
+    # defaults to signed=True, which turned an unset 0xFFFF into -1 (so
+    # feed_in_power_limit_* read -0.1 % / -0.01 kW on a real SG12RT).
     power_limitation_setting = gauge(
         reg.POWER_LIMITATION_SETTING.address,
         scale=reg.POWER_LIMITATION_SETTING.scale,
         unit=reg.POWER_LIMITATION_SETTING.unit,
+        signed=False,
         writable=True,
     )
     night_svg_switch = gauge(
@@ -540,6 +544,7 @@ class SungrowSGControl(Component):
         reg.POWER_LIMITATION_ADJUSTMENT.address,
         scale=reg.POWER_LIMITATION_ADJUSTMENT.scale,
         unit=reg.POWER_LIMITATION_ADJUSTMENT.unit,
+        signed=False,
         writable=True,
     )
     feed_in_power_limit_switch = gauge(
@@ -547,15 +552,22 @@ class SungrowSGControl(Component):
         scale=1,
         writable=_validate_enable_disable,
     )
+    # nan=0xFFFF: a never-configured feed-in limit reads back 0xFFFF on a
+    # real SG12RT (live-observed 2026-09-25) - decode that as None (unknown)
+    # rather than a nonsense 6553.5 % / 655.35 kW.
     feed_in_power_limit_value = gauge(
         reg.FEED_IN_POWER_LIMIT_VALUE.address,
         scale=reg.FEED_IN_POWER_LIMIT_VALUE.scale,
         unit=reg.FEED_IN_POWER_LIMIT_VALUE.unit,
+        signed=False,
+        nan=0xFFFF,
         writable=True,
     )
     feed_in_power_limit_ratio = gauge(
         reg.FEED_IN_POWER_LIMIT_RATIO.address,
         scale=reg.FEED_IN_POWER_LIMIT_RATIO.scale,
         unit=reg.FEED_IN_POWER_LIMIT_RATIO.unit,
+        signed=False,
+        nan=0xFFFF,
         writable=True,
     )

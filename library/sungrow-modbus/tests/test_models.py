@@ -409,6 +409,29 @@ async def test_control_power_limitation_setting_write_scales_correctly(
     assert events[0].values == [755]
 
 
+async def test_unset_feed_in_limit_reads_as_none_not_negative(mock_modbus_unit):
+    """Live-observed on a real SG12RT: never-configured feed-in limits read
+    0xFFFF. As signed that was -0.1 % / -0.01 kW; it must decode to None.
+    """
+    mock_modbus_unit.holding[reg.FEED_IN_POWER_LIMIT_VALUE.address] = 0xFFFF
+    mock_modbus_unit.holding[reg.FEED_IN_POWER_LIMIT_RATIO.address] = 0xFFFF
+
+    control = SungrowSGControl(mock_modbus_unit)
+    await control.async_update()
+
+    assert control.feed_in_power_limit_value is None
+    assert control.feed_in_power_limit_ratio is None
+
+
+async def test_control_u16_values_above_32767_are_not_negative(mock_modbus_unit):
+    mock_modbus_unit.holding[reg.POWER_LIMITATION_SETTING.address] = 40000
+
+    control = SungrowSGControl(mock_modbus_unit)
+    await control.async_update()
+
+    assert control.power_limitation_setting == 4000.0  # 40000 * 0.1, unsigned
+
+
 @pytest.mark.parametrize(
     ("field", "value", "raw"),
     [
